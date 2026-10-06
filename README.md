@@ -90,3 +90,19 @@ them to the player. Cards are seeded by hand for now. Real spawn logic
 - Timestamps are stored as naive UTC (`.replace(tzinfo=None)`), because
   the `claimed_at` column has no timezone and asyncpg rejects
   timezone-aware values.
+
+
+## Phase 5 — Photo submission
+
+`POST /submissions` (form-data: `player_id`, `card_id`, `lat`, `lng`, `photo`)
+
+- The card must be `claimed` by the same player, otherwise the request is rejected with `400`. This is what makes the claim step mandatory.
+- The photo is saved locally to `storage/photos/<uuid>.jpg` (gitignored).
+- A `Submission` row is created and the card status becomes `submitted`.
+- Two-stage reward:
+  - the player gets the card's `base_reward` immediately;
+  - a `PendingBonus` row is created for the card's `bonus_reward` with status `pending`. It is credited only after the admin API records an accepted review (Phase 7).
+- The response contains only `submission_id`, `status` and the base `reward`. It reveals nothing about the pending bonus or the review.
+- Submitting twice for the same card returns `400`, because the card is no longer `claimed`.
+
+Tested in Postman and verified in DataGrip: `players.currency_balance` increases by exactly `base_reward`, and a matching `pending_bonuses` row exists.
