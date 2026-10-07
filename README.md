@@ -99,9 +99,7 @@ them to the player. Cards are seeded by hand for now. Real spawn logic
 - The card must be `claimed` by the same player, otherwise the request is rejected with `400`. This is what makes the claim step mandatory.
 - The photo is saved locally to `storage/photos/<uuid>.jpg` (gitignored).
 - A `Submission` row is created and the card status becomes `submitted`.
-- Two-stage reward:
-  - the player gets the card's `base_reward` immediately;
-  - a `PendingBonus` row is created for the card's `bonus_reward` with status `pending`. It is credited only after the admin API records an accepted review (Phase 7).
+- The player is credited `base_reward` immediately. (The pending-bonus mechanism, which held a `bonus_reward` until a manual review, is disabled for now. The model and the admin credit code are kept so it can be re-enabled.)
 - The response contains only `submission_id`, `status` and the base `reward`. It reveals nothing about the pending bonus or the review.
 - Submitting twice for the same card returns `400`, because the card is no longer `claimed`.
 

@@ -42,7 +42,6 @@ async def create_submission(
 
     player = await db.get(Player, player_id)
     player.currency_balance += card.base_reward
-    db.add(PendingBonus(submission_id=submission.id, amount=card.bonus_reward))
     await db.commit()
 
     # --- Phase 6: hand off to doskaz ---
