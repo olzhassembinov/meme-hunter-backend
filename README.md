@@ -106,3 +106,18 @@ them to the player. Cards are seeded by hand for now. Real spawn logic
 - Submitting twice for the same card returns `400`, because the card is no longer `claimed`.
 
 Tested in Postman and verified in DataGrip: `players.currency_balance` increases by exactly `base_reward`, and a matching `pending_bonuses` row exists.
+
+
+## Phase 6 — doskaz handoff
+
+After a submission is saved, the backend hands it to doskaz (`DoskazClient`):
+
+1. `POST /api/storage/upload`: raw photo bytes, returns `{"path": "/storage/<hash>.jpeg"}`.
+2. `POST /api/objects/requests`: a "small form" facility request referencing that path. Every accessibility attribute is sent as `not_provided`. doskaz answers `204 No Content`, so no object id comes back.
+
+doskaz specifics (found by inspecting its own website in browser DevTools):
+- Auth is the `ACCESS_TOKEN` **cookie** of one shared doskaz account (`DOSKAZ_ACCESS_TOKEN` in `.env`), not a Bearer header. The cookie lasts 31 days and must be refreshed by hand.
+- CSRF is a double-submit pair: a random `XSRF-TOKEN` cookie plus an identical `X-Xsrf-Token` header, generated per client instance.
+- `first.otherNames` must not be empty.
+
+`submissions.handoff_status` becomes `sent` on success, or `failed` if doskaz rejects the request or is unreachable. The reason is printed to the server log. The player's reward is credited either way.
