@@ -121,3 +121,14 @@ doskaz specifics (found by inspecting its own website in browser DevTools):
 - `first.otherNames` must not be empty.
 
 `submissions.handoff_status` becomes `sent` on success, or `failed` if doskaz rejects the request or is unreachable. The reason is printed to the server log. The player's reward is credited either way.
+
+
+## Phase 7 — Verification (admin API)
+
+A separate admin API under `/admin`, protected by an `X-Admin-Key` header that is checked against `ADMIN_API_KEY` from `.env`. It is independent of player accounts. Players never see it.
+
+- `GET /admin/submissions`: lists every submission with its `handoff_status` and `review_status`.
+- `POST /admin/submissions/{id}/review?decision=accepted|rejected`: records doskaz's review outcome. doskaz has no status feed, so you check their admin panel yourself and record the result here.
+- On `accepted`, a background task credits the held bonus to the player once. It checks the status first, so it never credits twice. It marks the `pending_bonuses` row `credited` and sets `credited_at`.
+
+Limits: `BackgroundTasks` runs in-process, so a task scheduled just before a restart is lost. A real task queue would fix that.
