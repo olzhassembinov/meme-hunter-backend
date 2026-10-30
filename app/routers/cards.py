@@ -11,7 +11,12 @@ router = APIRouter(prefix="/cards", tags=["cards"])
 @router.get("/nearby")
 async def nearby_cards(lat: float, lng: float, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Card).where(Card.status == "active"))
-    return result.scalars().all()
+    # Approximate position only (3 decimals ~ 100 m): the exact place is revealed by /claim.
+    return [
+        {"id": c.id, "rarity": c.rarity,
+         "approx_lat": round(c.lat, 3), "approx_lng": round(c.lng, 3)}
+        for c in result.scalars().all()
+    ]
 
 
 @router.post("/{card_id}/claim")
