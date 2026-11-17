@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     doskaz_base_url: str = "https://doskaz.kz"
     doskaz_access_token: str
     admin_api_key: str
+    doskaz_handoff_enabled: bool = False
 
     class Config:
         env_file = ".env"

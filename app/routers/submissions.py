@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..models import Submission, PendingBonus, Card, Player
 from ..doskaz_client import DoskazClient
+from ..config import settings
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
 STORAGE_DIR = Path("storage/photos")
@@ -45,24 +46,28 @@ async def create_submission(
     await db.commit()
 
     # --- Phase 6: hand off to doskaz ---
-    doskaz = DoskazClient()
-    try:
-        photo_url = await doskaz.upload_photo(str(filepath))
-        await doskaz.submit_facility(
-            name=f"TEST Meme Hunter {submission.id}",
-            description="Test submission from the Meme Hunter game backend",
-            address="Алматы",
-            point=[lat, lng],
-            category_id=28,
-            photo_paths=[photo_url],
-        )
-        submission.handoff_status = "sent"
-    except httpx.HTTPStatusError as e:
-        print("doskaz rejected the request:", e.request.url, e.response.status_code, e.response.text)
-        submission.handoff_status = "failed"
-    except httpx.HTTPError as e:
-        print("could not reach doskaz:", repr(e))
-        submission.handoff_status = "failed"
+    if settings.doskaz_handoff_enabled:
+        doskaz = DoskazClient()
+        try:
+            photo_url = await doskaz.upload_photo(str(filepath))
+            await doskaz.submit_facility(
+                name=f"TEST Meme Hunter {submission.id}",
+                description="Test submission from the Meme Hunter game backend",
+                address="Алматы",
+                point=[lat, lng],
+                category_id=28,
+                photo_paths=[photo_url],
+            )
+            submission.handoff_status = "sent"
+        except httpx.HTTPStatusError as e:
+            print("doskaz rejected the request:", e.request.url, e.response.status_code, e.response.text)
+            submission.handoff_status = "failed"
+        except httpx.HTTPError as e:
+            print("could not reach doskaz:", repr(e))
+            submission.handoff_status = "failed"
+    else:
+        submission.handoff_status = "held"  # kept for review, sent to doskaz later
     await db.commit()
 
-    return {"submission_id": submission.id, "status": submission.handoff_status, "reward": card.base_reward}
+    # Player-facing result: the game accepted the photo. Doskaz delivery is internal.
+    return {"submission_id": submission.id, "status": "sent", "reward": card.base_reward}
