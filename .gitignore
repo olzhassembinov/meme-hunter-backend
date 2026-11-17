@@ -183,3 +183,4 @@ cython_debug/
 
 # Storage
 /storage
+.DS_Store
