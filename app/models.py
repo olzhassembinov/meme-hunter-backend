@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, DateTime, func
+from sqlalchemy import String, Integer, DateTime, Boolean, func
 from sqlalchemy import Float, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
 from sqlalchemy.dialects.postgresql import UUID
@@ -70,3 +70,16 @@ class PendingBonus(Base):
 Keeping them separate avoids the confusing overload where "approved" used to mean two different things. PendingBonus is its own table, one row 
 per submission (unique=True on submission_id), exactly as specified: the deferred bonus lives at the submission level, not folded into 
 the player row, because a submission's bonus can be voided independently of anything else about the player.'''
+
+class Staff(Base):
+    __tablename__ = "staff"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(String, unique=True)
+    password_hash: Mapped[str] = mapped_column(String)
+    role: Mapped[str] = mapped_column(String, default="reviewer")  # "admin" or "reviewer"
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+'''Staff are the people who run the game (admins and reviewers). They are kept apart from players on purpose,
+so a player account can never gain review rights. Only a bcrypt hash of the password is stored.'''

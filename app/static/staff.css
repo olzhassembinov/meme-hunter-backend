@@ -1,0 +1,32 @@
+:root {
+  --bg: #f6f6f4; --surface: #ffffff; --text: #1f1f1d; --muted: #6b6a66; --border: #dddcd6;
+  --accent: #2f5bd3; --danger: #b3261e; --success: #1f7a4d; --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #18181a; --surface: #222225; --text: #ececea; --muted: #a3a29d; --border: #38383c;
+          --accent: #7d9cf2; --danger: #f08a83; --success: #6fcf9c; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+       font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.topbar { display: flex; justify-content: space-between; align-items: center;
+          padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.brand { font-weight: 600; color: var(--text); text-decoration: none; }
+.brand span { color: var(--muted); font-weight: 400; }
+.who { display: flex; gap: 16px; align-items: center; color: var(--muted); font-size: 14px; }
+.who form { margin: 0; }
+main { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 16px; }
+.login { max-width: 360px; margin: 48px auto; display: flex; flex-direction: column; gap: 14px; }
+label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+input, select, textarea { font: inherit; color: var(--text); background: var(--bg);
+       border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { font: inherit; cursor: pointer; border-radius: 8px; padding: 9px 16px; border: 1px solid var(--border);
+         background: var(--surface); color: var(--text); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+button.success { background: var(--success); border-color: var(--success); color: #fff; }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); }
+.error { color: var(--danger); margin: 0; }

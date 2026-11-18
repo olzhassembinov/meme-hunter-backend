@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Meme Hunter staff{% endblock %}</title>
+  <link rel="stylesheet" href="/staff/static/staff.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/staff">Meme Hunter <span>staff</span></a>
+    {% if staff %}
+    <div class="who">
+      <span>{{ staff.username }} · {{ staff.role }}</span>
+      <form method="post" action="/staff/logout"><button class="link">Log out</button></form>
+    </div>
+    {% endif %}
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

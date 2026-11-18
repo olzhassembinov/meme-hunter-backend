@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     doskaz_access_token: str
     admin_api_key: str
     doskaz_handoff_enabled: bool = False
+    session_secret: str  # signs the staff login cookie; generate with: python -c "import secrets; print(secrets.token_hex(32))"
+    session_https_only: bool = False  # set to true on the server (HTTPS), keep false for local http
 
     class Config:
         env_file = ".env"
