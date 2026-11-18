@@ -44,10 +44,5 @@ async def logout(request: Request):
     return RedirectResponse("/staff/login", status_code=303)
 
 
-@router.get("")
-async def home(request: Request, staff: Staff = Depends(current_staff)):
-    # Placeholder start page; the review queue replaces it in the next commit.
-    return templates.TemplateResponse(request, "staff/home.html", {"staff": staff})
-
 '''One error message for "no such user" and "wrong password", so the page never reveals which usernames exist.
 Redirects use 303 so the browser follows them with a GET after a form POST.'''

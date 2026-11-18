@@ -1,0 +1,28 @@
+{% extends "staff/base.html" %}
+{% block title %}Queue · Meme Hunter staff{% endblock %}
+{% block content %}
+<nav class="tabs">
+  {% for s in statuses %}
+  <a href="/staff/queue?status={{ s }}" class="{{ 'active' if s == status }}">{{ s | capitalize }} <span class="count">{{ counts.get(s, 0) }}</span></a>
+  {% endfor %}
+</nav>
+
+{% if rows %}
+<div class="card list">
+  {% for r in rows %}
+  <a class="row" href="/staff/submissions/{{ r.sub.id }}">
+    <img class="thumb" src="/staff/photos/{{ r.sub.id }}" alt="" loading="lazy">
+    <div class="meta">
+      <div><strong>{{ r.card.rarity | capitalize if r.card else 'No card' }}</strong> · player {{ r.player_short }}</div>
+      <div class="muted">Sent {{ r.sub.created_at.strftime('%d %b %Y, %H:%M') }}
+        {% if r.sub.reviewed_at %} · reviewed {{ r.sub.reviewed_at.strftime('%d %b, %H:%M') }} UTC{% endif %}
+        {% if r.sub.reject_reason %} · {{ r.sub.reject_reason | replace('_', ' ') }}{% endif %}</div>
+    </div>
+    <div class="distance {{ 'far' if r.far }}">{{ r.distance ~ ' m' if r.distance is not none else '—' }}</div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">{{ 'Nothing to review.' if status == 'pending' else 'Nothing here yet.' }}</div>
+{% endif %}
+{% endblock %}

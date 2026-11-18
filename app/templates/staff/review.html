@@ -1,0 +1,98 @@
+{% extends "staff/base.html" %}
+{% block title %}Review · Meme Hunter staff{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+{% endblock %}
+{% block content %}
+<div class="crumbs">
+  <a href="/staff/queue">← Queue</a>
+  <span class="muted">{{ pending_left }} pending</span>
+  {% if next_id %}<a href="/staff/submissions/{{ next_id }}" id="skip">Skip (N) →</a>{% endif %}
+</div>
+
+<div class="review">
+  <section class="card photo-box">
+    <a href="/staff/photos/{{ sub.id }}" target="_blank" rel="noopener"><img src="/staff/photos/{{ sub.id }}" alt="Submitted photo"></a>
+    <p class="muted small">Click the photo to open it full size.</p>
+  </section>
+
+  <section class="side">
+    <div class="card">
+      <div id="map"></div>
+      <p class="distance-line">Player stood <strong class="{{ 'far' if far }}">{{ distance ~ ' m' if distance is not none else '?' }}</strong> from the card{% if far %} — more than 50 m away{% endif %}.</p>
+      <dl class="facts">
+        <dt>Card</dt><dd>{{ card.rarity | capitalize if card else 'missing' }}</dd>
+        <dt>Player</dt><dd>{{ player_short }}</dd>
+        <dt>Sent</dt><dd>{{ sub.created_at.strftime('%d %b %Y, %H:%M') }}</dd>
+        <dt>Doskaz</dt><dd>{{ sub.handoff_status }}</dd>
+        <dt>Status</dt><dd class="status-{{ sub.review_status }}">{{ sub.review_status }}{% if reviewer %} by {{ reviewer.username }}{% endif %}{% if sub.reject_reason %} ({{ sub.reject_reason | replace('_', ' ') }}){% endif %}</dd>
+      </dl>
+    </div>
+
+    <form class="card" method="post" action="/staff/submissions/{{ sub.id }}/review" id="review-form">
+      <h2>Accessibility</h2>
+      <div class="access">
+        {% for key, label in access_groups %}
+        <label>{{ label }}
+          <select name="access_{{ key }}">
+            {% for value, text in access_values %}
+            <option value="{{ value }}" {{ 'selected' if saved_access.get(key, 'unknown') == value }}>{{ text }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endfor %}
+      </div>
+
+      <label>Reject reason
+        <select name="reject_reason" id="reject-reason">
+          <option value="">— choose to reject —</option>
+          {% for value, text in reject_reasons %}
+          <option value="{{ value }}" {{ 'selected' if sub.reject_reason == value }}>{{ text }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <p class="error" id="reason-error" hidden>Choose a reason first.</p>
+
+      <div class="actions">
+        <button class="success" type="submit" name="decision" value="accept" id="accept">Accept (A)</button>
+        <button class="danger" type="submit" name="decision" value="reject" id="reject">Reject (R)</button>
+      </div>
+    </form>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const player = [{{ sub.lat }}, {{ sub.lng }}];
+  const cardPos = {{ '[' ~ card.lat ~ ', ' ~ card.lng ~ ']' if card else 'null' }};
+  const map = L.map('map', { scrollWheelZoom: false });
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  L.circleMarker(player, { radius: 8, color: '#2f5bd3', fillOpacity: 0.9 }).addTo(map).bindTooltip('Player');
+  if (cardPos) {
+    L.circleMarker(cardPos, { radius: 8, color: '#b3261e', fillOpacity: 0.9 }).addTo(map).bindTooltip('Card');
+    L.polyline([player, cardPos], { color: '#888', dashArray: '4 6' }).addTo(map);
+    map.fitBounds([player, cardPos], { padding: [40, 40], maxZoom: 18 });
+  } else {
+    map.setView(player, 17);
+  }
+
+  const reason = document.getElementById('reject-reason');
+  const reasonError = document.getElementById('reason-error');
+  document.getElementById('reject').addEventListener('click', (e) => {
+    if (!reason.value) { e.preventDefault(); reasonError.hidden = false; reason.focus(); }
+  });
+  reason.addEventListener('change', () => { reasonError.hidden = true; });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+    const k = e.key.toLowerCase();
+    if (k === 'a') document.getElementById('accept').click();
+    else if (k === 'r') document.getElementById('reject').click();
+    else if (k === 'n') { const s = document.getElementById('skip'); if (s) s.click(); }
+  });
+</script>
+{% endblock %}

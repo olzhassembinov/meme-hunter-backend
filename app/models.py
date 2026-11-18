@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import String, Integer, DateTime, Boolean, func
 from sqlalchemy import Float, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 
 class Base(DeclarativeBase):
@@ -53,6 +53,11 @@ class Submission(Base):
     lat: Mapped[float] = mapped_column(Float)
     lng: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Staff review (set on the review page)
+    reviewer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("staff.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reject_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    accessibility: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class PendingBonus(Base):

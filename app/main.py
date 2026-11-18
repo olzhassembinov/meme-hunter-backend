@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from .config import settings
 from .routers import players, doskaz, cards, submissions, admin
-from .staff import routes as staff_routes
+from .staff import routes as staff_routes, review as staff_review
 from .staff.auth import LoginRequired
 
 app = FastAPI(title="Meme Hunter Backend")
@@ -21,6 +21,7 @@ app.add_middleware(
 )
 app.mount("/staff/static", StaticFiles(directory=Path(__file__).parent / "static"), name="staff_static")
 app.include_router(staff_routes.router)
+app.include_router(staff_review.router)
 
 
 @app.exception_handler(LoginRequired)
