@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..models import Card
-from ..zones import in_active_zone
+from ..zones import not_allowed
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/cards", tags=["cards"])
 @router.get("/nearby")
 async def nearby_cards(lat: float, lng: float, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Card).where(Card.status == "active", ~in_active_zone(Card.location))  # never inside a safety zone
+        select(Card).where(Card.status == "active", ~not_allowed(Card.location))  # never in a safety zone or outside the play area
     )
     # Approximate position only (3 decimals ~ 100 m): the exact place is revealed by /claim.
     return [
@@ -27,7 +27,7 @@ async def claim_card(card_id: str, player_id: str = Form(...), db: AsyncSession 
     card = await db.get(Card, card_id)
     if card is None or card.status != "active":
         raise HTTPException(status_code=400, detail="Card not available to claim")
-    if (await db.execute(select(in_active_zone(Card.location)).where(Card.id == card.id))).scalar():
+    if (await db.execute(select(not_allowed(Card.location)).where(Card.id == card.id))).scalar():
         raise HTTPException(status_code=400, detail="Card not available to claim")
 
     card.status = "claimed"

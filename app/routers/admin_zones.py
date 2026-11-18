@@ -9,14 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..admin_auth import require_admin
 from ..database import get_db
 from ..models import Card, Zone
-from ..zones import ZONE_KINDS, in_active_zone, point, polygons_from_geojson
+from ..zones import PLAY_AREA, ZONE_KINDS, not_allowed, point, polygons_from_geojson
 
 router = APIRouter(prefix="/admin", tags=["admin: zones & cards"], dependencies=[Depends(require_admin)])
 
 
 class ZoneCreate(BaseModel):
     name: str = Field(min_length=1)
-    kind: str  # "restricted" or "dangerous"
+    kind: str  # "restricted", "dangerous" or "play_area"
     geojson: dict  # FeatureCollection from geojson.io, a Feature, or a Polygon/MultiPolygon geometry
 
 
@@ -28,13 +28,14 @@ class CardCreate(BaseModel):
     bonus_reward: int = 20
 
 
-async def deactivate_cards_inside(db: AsyncSession, zone_id) -> int:
-    """Cards that are now inside a zone stop existing for players: active ones and claimed ones."""
-    zone_area = select(Zone.area).where(Zone.id == zone_id).scalar_subquery()
+async def deactivate_disallowed_cards(db: AsyncSession) -> int:
+    """After zones change: active and claimed cards that are now inside a blocked zone,
+    or outside every play area, stop existing for players."""
     result = await db.execute(
         update(Card)
-        .where(Card.status.in_(("active", "claimed")), func.ST_Intersects(zone_area, Card.location))
+        .where(Card.status.in_(("active", "claimed")), not_allowed(Card.location))
         .values(status="inactive")
+        .execution_options(synchronize_session=False)
     )
     return result.rowcount
 
@@ -56,10 +57,10 @@ async def create_zones(data: ZoneCreate, db: AsyncSession = Depends(get_db)):
         zone = Zone(id=uuid.uuid4(), name=name, kind=data.kind, area=area, is_active=True)
         db.add(zone)
         await db.flush()
-        removed = await deactivate_cards_inside(db, zone.id)
-        created.append({"id": zone.id, "name": name, "kind": data.kind, "cards_deactivated": removed})
+        created.append({"id": zone.id, "name": name, "kind": data.kind})
+    removed = await deactivate_disallowed_cards(db)
     await db.commit()
-    return {"zones": created}
+    return {"zones": created, "cards_deactivated": removed}
 
 
 @router.get("/zones")
@@ -90,16 +91,20 @@ async def deactivate_zone(zone_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 async def create_card(data: CardCreate, db: AsyncSession = Depends(get_db)):
     blocked = (await db.execute(
         select(Zone.name, Zone.kind)
-        .where(Zone.is_active.is_(True), func.ST_Intersects(Zone.area, point(data.lat, data.lng)))
+        .where(Zone.is_active.is_(True), Zone.kind != PLAY_AREA,
+               func.ST_Intersects(Zone.area, point(data.lat, data.lng)))
         .limit(1)
     )).first()
     if blocked:
         raise HTTPException(status_code=409, detail=f"Point is inside {blocked.kind} zone '{blocked.name}'")
+    if (await db.execute(select(not_allowed(point(data.lat, data.lng))))).scalar():
+        raise HTTPException(status_code=409, detail="Point is outside the play area")
     card = Card(lat=data.lat, lng=data.lng, rarity=data.rarity,
                 base_reward=data.base_reward, bonus_reward=data.bonus_reward, status="active")
     db.add(card)
     await db.commit()
     return {"id": card.id, "lat": card.lat, "lng": card.lng, "rarity": card.rarity, "status": card.status}
 
-'''Admin-only (X-Admin-Key) tools for safety zones. A zone hides every card inside it at once and blocks new ones;
+'''Admin-only (X-Admin-Key) tools for zones. A restricted/dangerous zone hides every card inside it and blocks new ones;
+a play_area does the opposite: once one exists, cards live only inside play areas (the beta: the KBTU campus).
 cards.location is computed by Postgres, so even cards inserted by hand with SQL are covered by the checks.'''
