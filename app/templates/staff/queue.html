@@ -14,8 +14,8 @@
     <img class="thumb" src="/staff/photos/{{ r.sub.id }}" alt="" loading="lazy">
     <div class="meta">
       <div><strong>{{ r.card.rarity | capitalize if r.card else 'No card' }}</strong> · player {{ r.player_short }}</div>
-      <div class="muted">Sent {{ r.sub.created_at.strftime('%d %b %Y, %H:%M') }}
-        {% if r.sub.reviewed_at %} · reviewed {{ r.sub.reviewed_at.strftime('%d %b, %H:%M') }} UTC{% endif %}
+      <div class="muted">Sent {{ r.sub.created_at | local }}
+        {% if r.sub.reviewed_at %} · reviewed {{ r.sub.reviewed_at | local('%d %b, %H:%M') }}{% endif %}
         {% if r.sub.reject_reason %} · {{ r.sub.reject_reason | replace('_', ' ') }}{% endif %}</div>
     </div>
     <div class="distance {{ 'far' if r.far }}">{{ r.distance ~ ' m' if r.distance is not none else '—' }}</div>

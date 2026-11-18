@@ -12,8 +12,12 @@
 
 <div class="review">
   <section class="card photo-box">
-    <a href="/staff/photos/{{ sub.id }}" target="_blank" rel="noopener"><img src="/staff/photos/{{ sub.id }}" alt="Submitted photo"></a>
-    <p class="muted small">Click the photo to open it full size.</p>
+    {% for i in range(photo_count) %}
+    <a href="/staff/photos/{{ sub.id }}?i={{ i }}" target="_blank" rel="noopener"><img src="/staff/photos/{{ sub.id }}?i={{ i }}" alt="Submitted photo {{ i + 1 }}"></a>
+    {% else %}
+    <p class="muted">This submission has no photo.</p>
+    {% endfor %}
+    {% if photo_count %}<p class="muted small">Click a photo to open it full size.</p>{% endif %}
   </section>
 
   <section class="side">
@@ -23,9 +27,9 @@
       <dl class="facts">
         <dt>Card</dt><dd>{{ card.rarity | capitalize if card else 'missing' }}</dd>
         <dt>Player</dt><dd>{{ player_short }}</dd>
-        <dt>Sent</dt><dd>{{ sub.created_at.strftime('%d %b %Y, %H:%M') }}</dd>
+        <dt>Sent</dt><dd>{{ sub.created_at | local }}</dd>
         <dt>Doskaz</dt><dd>{{ sub.handoff_status }}</dd>
-        <dt>Status</dt><dd class="status-{{ sub.review_status }}">{{ sub.review_status }}{% if reviewer %} by {{ reviewer.username }}{% endif %}{% if sub.reject_reason %} ({{ sub.reject_reason | replace('_', ' ') }}){% endif %}</dd>
+        <dt>Status</dt><dd class="status-{{ sub.review_status }}">{{ sub.review_status }}{% if reviewer %} by {{ reviewer.username }}, {{ sub.reviewed_at | local }}{% endif %}{% if sub.reject_reason %} ({{ sub.reject_reason | replace('_', ' ') }}){% endif %}</dd>
       </dl>
     </div>
 
@@ -58,6 +62,23 @@
         <button class="danger" type="submit" name="decision" value="reject" id="reject">Reject (R)</button>
       </div>
     </form>
+
+    {% if doskaz_result == 'sent' %}
+    <div class="card notice ok">Sent to doskaz. It now waits in their review queue.</div>
+    {% elif doskaz_result == 'failed' %}
+    <div class="card notice bad">Sending to doskaz failed. The server log has the reason (often an expired doskaz token). You can try again.</div>
+    {% endif %}
+
+    {% if can_send %}
+    <form class="card" method="post" action="/staff/submissions/{{ sub.id }}/send-to-doskaz" id="doskaz-form">
+      <h2>Send to doskaz</h2>
+      <label>Object name <input name="name" required placeholder="e.g. KBTU, main entrance"></label>
+      <label>Address <input name="address" value="Алматы"></label>
+      <label>Category id <input name="category_id" type="number" value="{{ default_category }}" required></label>
+      <p class="muted small">The 6 accessibility answers above go into the description. This sends now, even while automatic handoff is off.</p>
+      <button class="primary" type="submit">Send to doskaz</button>
+    </form>
+    {% endif %}
   </section>
 </div>
 {% endblock %}
@@ -88,7 +109,7 @@
   reason.addEventListener('change', () => { reasonError.hidden = true; });
 
   document.addEventListener('keydown', (e) => {
-    if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName)) return;
     const k = e.key.toLowerCase();
     if (k === 'a') document.getElementById('accept').click();
     else if (k === 'r') document.getElementById('reject').click();

@@ -2,12 +2,12 @@ import shutil
 import uuid
 from pathlib import Path
 
-import httpx
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..models import Submission, PendingBonus, Card, Player
-from ..doskaz_client import DoskazClient
+from ..handoff import send_to_doskaz
+from ..timeutil import utcnow_naive
 from ..config import settings
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -35,6 +35,7 @@ async def create_submission(
 
     submission = Submission(
         player_id=player_id, card_id=card_id, lat=lat, lng=lng, photo_path=str(filepath),
+        created_at=utcnow_naive(),
     )
     card.status = "submitted"
     db.add(submission)
@@ -45,26 +46,16 @@ async def create_submission(
     player.currency_balance += card.base_reward
     await db.commit()
 
-    # --- Phase 6: hand off to doskaz ---
+    # --- Phase 6: hand off to doskaz (only when the switch is on) ---
     if settings.doskaz_handoff_enabled:
-        doskaz = DoskazClient()
-        try:
-            photo_url = await doskaz.upload_photo(str(filepath))
-            await doskaz.submit_facility(
-                name=f"TEST Meme Hunter {submission.id}",
-                description="Test submission from the Meme Hunter game backend",
-                address="Алматы",
-                point=[lat, lng],
-                category_id=28,
-                photo_paths=[photo_url],
-            )
-            submission.handoff_status = "sent"
-        except httpx.HTTPStatusError as e:
-            print("doskaz rejected the request:", e.request.url, e.response.status_code, e.response.text)
-            submission.handoff_status = "failed"
-        except httpx.HTTPError as e:
-            print("could not reach doskaz:", repr(e))
-            submission.handoff_status = "failed"
+        submission.handoff_status, _ = await send_to_doskaz(
+            photo_paths=[str(filepath)],
+            name=f"TEST Meme Hunter {submission.id}",
+            description="Test submission from the Meme Hunter game backend",
+            address="Алматы",
+            point=[lat, lng],
+            category_id=28,
+        )
     else:
         submission.handoff_status = "held"  # kept for review, sent to doskaz later
     await db.commit()

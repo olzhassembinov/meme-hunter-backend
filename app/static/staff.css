@@ -71,3 +71,7 @@ form.card { display: flex; flex-direction: column; gap: 12px; }
 .access { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .actions { display: flex; gap: 10px; }
 .actions button { flex: 1; padding: 11px; }
+.photo-box { display: flex; flex-direction: column; gap: 12px; }
+.notice { padding: 14px 18px; }
+.notice.ok { border-color: var(--success); color: var(--success); }
+.notice.bad { border-color: var(--danger); color: var(--danger); }

@@ -1,5 +1,4 @@
 import math
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -9,8 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models import Card, Staff, Submission
-from .auth import current_staff
+from ..handoff import send_to_doskaz
+from ..timeutil import to_local, utcnow_naive
+from .auth import current_staff, require_role
 from .routes import templates
+
+# Show every stored (UTC) time in Almaty time: {{ sub.created_at | local }}
+templates.env.filters["local"] = lambda dt, fmt="%d %b %Y, %H:%M": to_local(dt).strftime(fmt) if dt else "—"
 
 router = APIRouter(prefix="/staff", tags=["staff pages"], include_in_schema=False)
 
@@ -37,6 +41,20 @@ REJECT_REASONS = [
     ("other", "Other"),
 ]
 STATUSES = ("pending", "accepted", "rejected")
+DOSKAZ_DEFAULT_CATEGORY = 28  # the category used in the Phase 6 test; see /doskaz/categories for others
+
+
+def photo_paths(sub: Submission) -> list[str]:
+    """All photos of a submission. One for now; multi-photo submissions will extend this list."""
+    return [sub.photo_path] if sub.photo_path else []
+
+
+def access_summary(accessibility: dict | None) -> str:
+    """Our reviewer's 6-group verdict as one line of text for doskaz's checker."""
+    labels = dict(ACCESS_GROUPS)
+    values = dict(ACCESS_VALUES)
+    data = accessibility or {}
+    return "; ".join(f"{labels[k]}: {values.get(data.get(k, 'unknown'), 'Unknown')}" for k, _ in ACCESS_GROUPS)
 
 
 def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -79,7 +97,7 @@ async def queue(
 ):
     if status not in STATUSES:
         status = "pending"
-    order = Submission.created_at if status == "pending" else Submission.reviewed_at.desc()
+    order = Submission.created_at if status == "pending" else Submission.reviewed_at.desc().nulls_last()
     result = await db.execute(
         select(Submission, Card).join(Card, Card.id == Submission.card_id, isouter=True)
         .where(Submission.review_status == status).order_by(order).limit(200)
@@ -111,6 +129,11 @@ async def review_page(
         "access_groups": ACCESS_GROUPS, "access_values": ACCESS_VALUES,
         "reject_reasons": REJECT_REASONS, "saved_access": sub.accessibility or {},
         "next_id": await next_pending_id(db, exclude_id=sub.id), "pending_left": pending_left,
+        "photo_count": len(photo_paths(sub)),
+        "can_send": staff.role == "admin" and sub.review_status == "accepted"
+                    and sub.handoff_status in ("held", "failed"),
+        "default_category": DOSKAZ_DEFAULT_CATEGORY,
+        "doskaz_result": request.query_params.get("doskaz"),
     })
 
 
@@ -138,23 +161,55 @@ async def save_review(
     sub.review_status = "accepted" if decision == "accept" else "rejected"
     sub.reject_reason = reject_reason if decision == "reject" else None
     sub.reviewer_id = staff.id
-    sub.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None)  # naive UTC, like claimed_at
+    sub.reviewed_at = utcnow_naive()
     await db.commit()
 
     next_id = await next_pending_id(db)
     return RedirectResponse(f"/staff/submissions/{next_id}" if next_id else "/staff/queue", status_code=303)
 
 
-@router.get("/photos/{submission_id}")
-async def photo(submission_id: str, staff: Staff = Depends(current_staff), db: AsyncSession = Depends(get_db)):
+@router.post("/submissions/{submission_id}/send-to-doskaz")
+async def send_submission_to_doskaz(
+    submission_id: str,
+    name: str = Form(...), address: str = Form("Алматы"), category_id: int = Form(DOSKAZ_DEFAULT_CATEGORY),
+    staff: Staff = Depends(require_role("admin")), db: AsyncSession = Depends(get_db),
+):
     sub = await db.get(Submission, submission_id)
-    if sub is None or not sub.photo_path:
+    if sub is None:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    if sub.review_status != "accepted" or sub.handoff_status not in ("held", "failed"):
+        raise HTTPException(status_code=400, detail="Only accepted submissions that were not sent yet")
+    if not name.strip():
+        raise HTTPException(status_code=400, detail="Object name is required")
+
+    sub.handoff_status, _ = await send_to_doskaz(
+        photo_paths=photo_paths(sub),
+        name=name.strip(),
+        description=f"Collected with Meme Hunter. Accessibility checked by our reviewer: {access_summary(sub.accessibility)}.",
+        address=address.strip() or "Алматы",
+        point=[sub.lat, sub.lng],
+        category_id=category_id,
+    )
+    await db.commit()
+    return RedirectResponse(f"/staff/submissions/{sub.id}?doskaz={sub.handoff_status}", status_code=303)
+
+
+@router.get("/photos/{submission_id}")
+async def photo(
+    submission_id: str, i: int = 0,
+    staff: Staff = Depends(current_staff), db: AsyncSession = Depends(get_db),
+):
+    sub = await db.get(Submission, submission_id)
+    paths = photo_paths(sub) if sub else []
+    if not 0 <= i < len(paths):
         raise HTTPException(status_code=404, detail="No photo")
-    path = Path(sub.photo_path).resolve()
+    path = Path(paths[i]).resolve()
     if PHOTO_DIR not in path.parents or not path.is_file():  # only files inside storage/photos
         raise HTTPException(status_code=404, detail="No photo")
     return FileResponse(path, media_type="image/jpeg")
 
+
 '''Reviewers see a short player number, never the player's name. Accepting or rejecting does not touch coins
-(the base reward was paid on submission) and sends nothing to doskaz: handoff_status stays "held".
+(the base reward was paid on submission) and sends nothing to doskaz: handoff_status stays "held" until an admin
+presses "Send to doskaz", which sends that one submission whatever DOSKAZ_HANDOFF_ENABLED says.
 Saving a decision opens the oldest pending submission next, so a reviewer can work through the queue without going back.'''
