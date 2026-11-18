@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import String, Integer, DateTime, Boolean, func
-from sqlalchemy import Float, ForeignKey
+from sqlalchemy import Float, ForeignKey, Computed
+from geoalchemy2 import Geometry
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 
@@ -35,6 +36,12 @@ class Card(Base):
     status: Mapped[str] = mapped_column(String, default="active")
     claimed_by_player_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("players.id"), nullable=True)
     claimed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    # PostGIS point computed by the database from lat/lng, so it can never disagree with them.
+    # Cards inserted by hand with only lat/lng still get it. Used for zone checks (and later radius search).
+    location = mapped_column(
+        Geometry("POINT", srid=4326, spatial_index=False),
+        Computed("ST_SetSRID(ST_MakePoint(lng, lat), 4326)", persisted=True),
+    )
 
 '''Two reward fields now, not one: base_reward is credited instantly on submission; 
 bonus_reward is what gets recorded as a pending bonus and only lands in the player's 
@@ -88,3 +95,19 @@ class Staff(Base):
 
 '''Staff are the people who run the game (admins and reviewers). They are kept apart from players on purpose,
 so a player account can never gain review rights. Only a bcrypt hash of the password is stored.'''
+
+
+
+class Zone(Base):
+    __tablename__ = "zones"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String)
+    kind: Mapped[str] = mapped_column(String)  # "restricted" or "dangerous": both mean no cards here
+    area = mapped_column(Geometry("GEOMETRY", srid=4326, spatial_index=False))  # Polygon or MultiPolygon
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+'''Zones are areas where no card may exist: restricted (not allowed in) or dangerous (roads, rail, water, construction).
+For spawning both kinds behave the same; the kind is kept so the admin and the thesis can tell why a zone exists.
+Spatial indexes are created in the migration by name (spatial_index=False here), so Alembic does not try to manage them twice.'''

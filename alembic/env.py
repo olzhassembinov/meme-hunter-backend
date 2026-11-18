@@ -26,6 +26,17 @@ config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"
 # Our models, so 'alembic revision --autogenerate' can compare them with the database.
 target_metadata = Base.metadata
 
+
+def include_object(obj, name, type_, reflected, compare_to):
+    # Tables that exist in the database but not in our models belong to PostGIS
+    # (spatial_ref_sys, topology, tiger geocoder on the server's postgis image). Never touch them.
+    if type_ == "table" and reflected and compare_to is None:
+        return False
+    # Spatial (GiST) indexes are created by hand in migrations; don't let autogenerate fight over them.
+    if type_ == "index" and name and name.startswith("idx_") and name.endswith("_gist"):
+        return False
+    return True
+
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
@@ -50,6 +61,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -57,7 +69,7 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(connection=connection, target_metadata=target_metadata, include_object=include_object)
 
     with context.begin_transaction():
         context.run_migrations()

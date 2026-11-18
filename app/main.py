@@ -4,7 +4,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from .config import settings
-from .routers import players, doskaz, cards, submissions, admin
+from .routers import players, doskaz, cards, submissions, admin, admin_zones
 from .staff import routes as staff_routes, review as staff_review
 from .staff.auth import LoginRequired
 
@@ -32,6 +32,7 @@ app.include_router(players.router) #including the players router in the main app
 app.include_router(doskaz.router) #including the doskaz router in the main application
 app.include_router(cards.router) #including the cards router in the main application
 app.include_router(admin.router) #including the admin router in the main application
+app.include_router(admin_zones.router)  # safety zones and card creation (admin)
 app.include_router(submissions.router) #including the submissions router in the main application
 
 @app.get("/health")
