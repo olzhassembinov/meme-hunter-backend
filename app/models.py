@@ -17,8 +17,12 @@ class Player(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
     display_name: Mapped[str] = mapped_column(String)
     currency_balance: Mapped[int] = mapped_column(Integer, default=0)
-    level: Mapped[int] = mapped_column(Integer, default=1)
+    level: Mapped[int] = mapped_column(Integer, default=1)  # unused; progression uses xp + rank
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Progression (see app/progression.py): xp only grows; rank is derived from it, never stored.
+    xp: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    xp_booster_multiplier: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 2 or 5
+    xp_booster_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # naive UTC
 
 '''This is deliberately missing a doskaz_user_id column from our earlier schema sketch. 
 Since every submission goes out under the one shared doskaz account for now, there's no per-player 
@@ -65,6 +69,7 @@ class Submission(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reject_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     accessibility: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    xp_awarded: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # incl. booster
 
 
 class PendingBonus(Base):

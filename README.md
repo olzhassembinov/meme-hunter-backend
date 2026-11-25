@@ -60,17 +60,63 @@ Request (JSON):
 ```json
 { "display_name": "Olly" }
 ```
-Response `200`:
-```json
-{ "id": "8c05163d-…", "display_name": "Olly", "currency_balance": 0, "level": 1 }
-```
-The client stores `id` and sends it with every later request.
+Response `200`: the player profile (same shape as `GET /players/{player_id}`). The client stores `id` and sends it
+with every later request.
 
 ### `GET /players/{player_id}`
-Current player data (use it to refresh the coin balance).
-Response `200`: same shape as above. `404 {"detail": "Player not found"}`.
+Player profile: coins, XP, rank and XP booster. Use it to refresh the profile screen and the booster timer.
 
-> `level` exists but is not used yet (always `1`).
+Response `200`:
+```json
+{
+  "id": "8c05163d-…", "display_name": "Olly",
+  "currency_balance": 50, "level": 1,
+  "xp": 650, "rank": "rank_2", "xp_to_next_rank": 850,
+  "booster": { "active": true, "multiplier": 2, "expires_at": "2026-11-26T12:00:00Z", "seconds_left": 41230 }
+}
+```
+- `xp_to_next_rank` is `null` at the top rank.
+- Without an active booster: `"booster": {"active": false, "multiplier": null, "expires_at": null, "seconds_left": 0}`.
+- `level` is legacy and always `1`; use `rank`.
+- `404 {"detail": "Player not found"}`, `422` for a malformed id.
+
+### `POST /players/{player_id}/boosters/xp`
+Buy an XP booster with coins. It lasts 24 hours.
+
+Request (JSON): `{ "multiplier": 2 }` (`2` or `5`)
+
+Response `200`: the updated profile (as above).
+- `400 {"detail": "Not enough coins"}`; `422` if the multiplier is not 2 or 5.
+- Buying while a booster is active **replaces** it (new multiplier, new 24 h). Boosters do not stack.
+
+### `GET /players/{player_id}/collection`
+Cards the player has caught (rejected photos are not listed).
+
+Response `200`:
+```json
+{
+  "total": 7,
+  "by_rarity": { "common": 4, "rare": 2, "epic": 1, "legendary": 0 },
+  "cards": [
+    { "card_id": "ae8bbba4-…", "rarity": "rare", "collected_at": "2026-11-24T12:30:00Z", "coins": 20, "xp": 100 }
+  ]
+}
+```
+Newest first. `xp` is what was actually credited (including a booster). Cards have no fixed picture yet: choose the
+meme picture from `card_id` (e.g. a hash of it within the rarity's pictures) so the same card always looks the same.
+
+### `GET /leaderboard?player_id=<uuid>&limit=20`
+Players ranked by XP (ties: earlier registration first). `limit` 1–100, default 20. `player_id` is optional.
+
+Response `200`:
+```json
+{
+  "top": [ { "position": 1, "display_name": "Olly", "xp": 650, "rank": "rank_2", "cards": 7 } ],
+  "me":  { "position": 14, "display_name": "Aru", "xp": 100, "rank": "rank_1", "cards": 1 }
+}
+```
+`me` is the requesting player's own entry (also when outside the top), `null` without `player_id`.
+Player ids are never exposed here.
 
 ### `GET /cards/nearby?lat=<float>&lng=<float>`
 Cards a player can hunt.
@@ -111,24 +157,38 @@ Request (multipart form-data):
 
 Response `200`:
 ```json
-{ "submission_id": "6ce1a298-…", "status": "sent", "reward": 20 }
+{ "submission_id": "6ce1a298-…", "status": "sent", "reward": 20, "xp": 100 }
 ```
 - `status` is always `"sent"` once the photo is stored and the coins are credited. The client must not interpret it further.
 - `reward` = the card's coins; they are added to `currency_balance` immediately.
+- `xp` = XP credited for this catch (card coins × 5, × booster multiplier if one is active).
 - `400 {"detail": "Card must be claimed by this player first"}`.
 - The card becomes `submitted` and disappears from the map.
 
-### Card rarity and rewards (beta data)
+### Rarity, rewards and progression
 
-| Rarity | Coins |
+| Rarity | Coins (beta cards) | XP (coins × 5) |
+|---|---|---|
+| common | 10 | 50 |
+| rare | 20 | 100 |
+| epic | 40 | 200 |
+| legendary | 80 | 400 |
+
+Coins and XP are stored per card (`base_reward`), so other values are possible.
+XP only grows; coins are spent (XP boosters).
+
+| Rank id | Minimum XP |
 |---|---|
-| common | 10 |
-| rare | 20 |
-| epic | 40 |
-| legendary | 80 |
+| `rank_1` | 0 |
+| `rank_2` | 500 |
+| `rank_3` | 1500 |
+| `rank_4` | 3500 |
+| `rank_5` | 7000 |
 
-The reward is stored per card (`base_reward`), so other values are possible. Cards have **no fixed meme picture**
-yet; the client chooses a picture by rarity.
+Rank ids are placeholders; the client maps them to display names. XP booster prices: ×2 = 50 coins, ×5 = 150 coins,
+24 hours. All these numbers live in `app/progression.py`.
+
+Cards have **no fixed meme picture** yet; the client chooses a picture by rarity (see collection).
 
 ---
 
@@ -177,9 +237,9 @@ Photos are only served to logged-in staff.
 
 | Table | Key columns |
 |---|---|
-| `players` | `id`, `display_name`, `currency_balance`, `level`, `created_at` |
+| `players` | `id`, `display_name`, `currency_balance`, `level` (legacy), `xp`, `xp_booster_multiplier`, `xp_booster_expires_at`, `created_at` |
 | `cards` | `id`, `lat`, `lng`, `location` (PostGIS point, computed), `rarity`, `base_reward`, `bonus_reward`, `status` (`active`/`claimed`/`submitted`/`inactive`), `claimed_by_player_id`, `claimed_at` |
-| `submissions` | `id`, `player_id`, `card_id`, `lat`, `lng`, `photo_path`, `handoff_status` (`held`/`sent`/`failed`), `review_status` (`pending`/`accepted`/`rejected`), `reviewer_id`, `reviewed_at`, `reject_reason`, `accessibility` (JSON), `created_at` |
+| `submissions` | `id`, `player_id`, `card_id`, `lat`, `lng`, `photo_path`, `handoff_status` (`held`/`sent`/`failed`), `review_status` (`pending`/`accepted`/`rejected`), `reviewer_id`, `reviewed_at`, `reject_reason`, `accessibility` (JSON), `xp_awarded`, `created_at` |
 | `zones` | `id`, `name`, `kind`, `area` (PostGIS geometry), `is_active`, `created_at` |
 | `staff` | `id`, `username`, `password_hash` (bcrypt), `role`, `is_active` |
 | `pending_bonuses` | legacy, no longer written |
@@ -248,11 +308,12 @@ app/
   database.py        async engine and sessions
   models.py          SQLAlchemy models (tables)
   schemas.py         request/response models for players
-  routers/           game API (players, cards, submissions) and admin API (admin, admin_zones), doskaz debug route
+  routers/           game API (players, cards, submissions, leaderboard) and admin API (admin, admin_zones), doskaz debug route
   staff/             staff web pages: login, review queue, review screen, doskaz sending
   templates/staff/   HTML templates for the staff pages
   static/            CSS for the staff pages
   zones.py           zone rules (play area, blocked zones)
+  progression.py     XP, ranks and XP booster numbers
   handoff.py         sending a submission to doskaz
   doskaz_client.py   HTTP client for doskaz.kz
   timeutil.py        UTC storage / Almaty display helpers

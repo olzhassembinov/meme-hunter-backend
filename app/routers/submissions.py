@@ -9,6 +9,7 @@ from ..models import Submission, PendingBonus, Card, Player
 from ..handoff import send_to_doskaz
 from ..timeutil import utcnow_naive
 from ..config import settings
+from ..progression import active_multiplier, card_xp
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
 STORAGE_DIR = Path("storage/photos")
@@ -44,6 +45,10 @@ async def create_submission(
 
     player = await db.get(Player, player_id)
     player.currency_balance += card.base_reward
+    # XP is credited at the same moment as the coins; an active booster multiplies it.
+    xp_gained = card_xp(card) * active_multiplier(player, utcnow_naive())
+    player.xp += xp_gained
+    submission.xp_awarded = xp_gained
     await db.commit()
 
     # --- Phase 6: hand off to doskaz (only when the switch is on) ---
@@ -61,4 +66,4 @@ async def create_submission(
     await db.commit()
 
     # Player-facing result: the game accepted the photo. Doskaz delivery is internal.
-    return {"submission_id": submission.id, "status": "sent", "reward": card.base_reward}
+    return {"submission_id": submission.id, "status": "sent", "reward": card.base_reward, "xp": xp_gained}
