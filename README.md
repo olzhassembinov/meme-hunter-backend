@@ -1,132 +1,263 @@
-# meme-hunter-backend
-Backend of the game
+# Meme Hunter — Backend
 
-What Phase 2 is: the backend learns what a "player" is. Everything later (claiming cards, submitting photos, getting rewards) has to be attached to a player, so this phase creates the players table and the two basic endpoints for it, create a player and fetch a player. There's no login yet, on purpose, because that comes after the core pipeline works.
+Backend of **Meme Hunter**, a location-based mobile game (Unity, Android/iOS) that turns the collection of
+accessibility data about city infrastructure into a game. Players walk to real places, "catch" meme cards there
+and photograph the place (ramps, entrances, tactile paving, parking signs). Staff review the photos, and accepted
+data can be handed over to [doskaz.kz](https://doskaz.kz) ("Доступный Казахстан"), the national accessibility map.
 
-What each file is for:
+This README is the reference for anyone working against the backend: the Unity client, designers, and their tools.
+**What is implemented right now, and what is not, is in [STATUS.md](STATUS.md).** The history of how the backend
+was built phase by phase is in [docs/phase-guide.md](docs/phase-guide.md).
 
-config.py reads .env into one settings object (database URL, doskaz token, admin key). Every other file imports settings from here instead of reading .env itself.
-database.py creates the engine (the connection to Postgres) and get_db, which gives each incoming request its own database session and closes it when the request ends.
-models.py has the Player class, which describes what the players table looks like: id, display_name, currency_balance, level, created_at. It's a blueprint in Python only, and Postgres knows nothing about it yet.
-create_tables.py reads that blueprint and builds the real table in Postgres. You'll rerun it in later phases when new models are added.
-schemas.py defines the shape of data going in and out of the API. PlayerCreate accepts only display_name from the client, and PlayerOut defines what the API returns. It's separate from the model so a client can never send its own currency_balance or level.
-routers/players.py has the two endpoints, POST /players (create) and GET /players/{id} (fetch).
-main.py gets one extra line that plugs the players router into the app.
+---
 
-## Phase 3: Backend ↔ doskaz connectivity
+## At a glance
 
-**What it is:** the first check that the backend can talk to doskaz.kz.
-Everything later (uploading photos, submitting facility requests) goes
-through the same client, so this phase proves the connection works before
-any game logic depends on it.
+| | |
+|---|---|
+| Stack | Python 3.13, FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL 17 + PostGIS 3.6, Jinja2 (staff pages) |
+| Production URL | `https://api.zyangame.online` |
+| Hosting | Kamatera VPS (Ubuntu): nginx with HTTPS → uvicorn on `127.0.0.1:8000`; Postgres in Docker |
+| Player auth | None yet: the client sends its `player_id` with each request |
+| Admin auth | `X-Admin-Key` header (API) and username/password login (staff web pages) |
 
-**Files:**
-- `app/doskaz_client.py`: `DoskazClient`, the single place that makes
-  HTTP calls to doskaz. It reads the base URL and access token from the
-  settings (`.env`) and sends the token in an `Authorization: Bearer`
-  header. For now it has one method, `list_categories()`, which calls
-  `GET /api/objects/categories` and returns doskaz's category list.
-- `app/routers/doskaz.py`: a temporary debug endpoint,
-  `GET /doskaz/categories`, that calls the client and returns the result.
-  It exists so the connection can be tested from Postman without the rest
-  of the pipeline. It can be removed once the real flow works.
-- `app/main.py`: registers the doskaz router so the route exists.
+## How data flows
 
-**How to test:** start the server, send `GET /doskaz/categories` in
-Postman. A list of categories means the backend reached doskaz. Note the
-category `id` values, since Phase 6 needs one.
+```
+Player app ──► GET /cards/nearby ──► POST /cards/{id}/claim ──► POST /submissions (photo)
+                                                                     │  coins credited instantly
+                                                                     ▼
+                                              Staff review page (/staff): accept / reject,
+                                              fill in 6 accessibility groups
+                                                                     │  admin presses "Send to doskaz"
+                                                                     ▼
+                                                               doskaz.kz request
+```
 
-**Known limitations:**
-- The categories endpoint is probably public, so a 200 proves the
-  connection but not that the token is valid. The token is first truly
-  tested in Phase 6.
-- The doskaz website sends the token as an `ACCESS_TOKEN` cookie, while
-  this client sends it as a Bearer header. If Phase 6 returns 401 with a
-  fresh token, switch the client to send the cookie instead.
-- The token is copied by hand from a logged-in browser session and
-  expires, so it has to be refreshed periodically.
+- Players never see review results or anything about doskaz. The reward is paid at submission time.
+- Cards exist only inside an active **play area** (currently the KBTU campus) and never inside a
+  **restricted** or **dangerous** zone (roads, construction, etc.).
 
+---
 
-  ## Phase 4: Cards and claim
+## Game API (used by the Unity client)
 
-**What it is:** the client-facing side of the card hunt. The backend
-can list the cards that are available, and a player can claim one. Claiming
-is the point where the card's exact coordinates are handed to the client,
-which uses them only for the local distance ("fog") effect and never shows
-them to the player. Cards are seeded by hand for now. Real spawn logic
-(priority zones from doskaz coverage) comes later.
+Base URL: `https://api.zyangame.online` (local development: `http://localhost:8000`).
+Interactive docs: `/docs` (Swagger UI).
 
-**Files:**
-- `app/models.py`: the `Card` model. It stores `lat`, `lng`, `rarity`,
-  `base_reward` (paid instantly on submission, Phase 5) and `bonus_reward`
-  (held as a pending bonus, Phase 5 and 7). `status` moves through
-  `active` → `claimed` → `submitted`, and `claimed_by_player_id` and
-  `claimed_at` record who claimed it and when.
-- `app/routers/cards.py`:
-  - `GET /cards/nearby`: returns every card with status `active`.
-    `lat` and `lng` are accepted but not used to filter yet, so this
-    proves the response shape the client will use.
-  - `POST /cards/{card_id}/claim`: takes `player_id` as form data, locks
-    the card to that player, and returns `lat`, `lng` and `rarity`.
-    A card that isn't `active` returns 400.
-- `app/main.py`: registers the cards router.
+Conventions:
+- IDs are UUID strings.
+- Errors have the shape `{"detail": "<message>"}`.
+- Coordinates are WGS84 decimal degrees (`lat`, `lng`).
 
-**How to test:**
-1. Run `python create_tables.py` to create the `cards` table.
-2. Insert test cards in DataGrip. Fill every column, because the defaults
-   in `models.py` exist only in Python and plain SQL gets none of them.
-3. `GET /cards/nearby?lat=43.238&lng=76.889` returns the active cards.
-4. Create a player with `POST /players`, then `POST /cards/{id}/claim`
-   with form-data `player_id`. It returns the coordinates, and the card
-   becomes `claimed` in the database.
-5. Claiming the same card again returns 400, and `nearby` no longer lists it.
+### `GET /health`
+Liveness check. → `200 {"status": "ok"}`
 
-**Known limitations:**
-- `nearby` ignores the position and returns all active cards.
-- Claiming doesn't check that the player exists. An unknown `player_id`
-  fails on the foreign key and returns a 500.
-- Two players claiming the same card at the same moment could both
-  succeed, because the check and the update aren't locked.
-- Timestamps are stored as naive UTC (`.replace(tzinfo=None)`), because
-  the `claimed_at` column has no timezone and asyncpg rejects
-  timezone-aware values.
+### `POST /players`
+Create a player (registration = choosing a name).
 
+Request (JSON):
+```json
+{ "display_name": "Olly" }
+```
+Response `200`:
+```json
+{ "id": "8c05163d-…", "display_name": "Olly", "currency_balance": 0, "level": 1 }
+```
+The client stores `id` and sends it with every later request.
 
-## Phase 5 — Photo submission
+### `GET /players/{player_id}`
+Current player data (use it to refresh the coin balance).
+Response `200`: same shape as above. `404 {"detail": "Player not found"}`.
 
-`POST /submissions` (form-data: `player_id`, `card_id`, `lat`, `lng`, `photo`)
+> `level` exists but is not used yet (always `1`).
 
-- The card must be `claimed` by the same player, otherwise the request is rejected with `400`. This is what makes the claim step mandatory.
-- The photo is saved locally to `storage/photos/<uuid>.jpg` (gitignored).
-- A `Submission` row is created and the card status becomes `submitted`.
-- The player is credited `base_reward` immediately. (The pending-bonus mechanism, which held a `bonus_reward` until a manual review, is disabled for now. The model and the admin credit code are kept so it can be re-enabled.)
-- The response contains only `submission_id`, `status` and the base `reward`. It reveals nothing about the pending bonus or the review.
-- Submitting twice for the same card returns `400`, because the card is no longer `claimed`.
+### `GET /cards/nearby?lat=<float>&lng=<float>`
+Cards a player can hunt.
 
-Tested in Postman and verified in DataGrip: `players.currency_balance` increases by exactly `base_reward`, and a matching `pending_bonuses` row exists.
+Response `200`:
+```json
+[
+  { "id": "ae8bbba4-…", "rarity": "rare", "approx_lat": 43.256, "approx_lng": 76.943 }
+]
+```
+- Returns **all** active cards inside the play area. `lat`/`lng` are accepted but not used for filtering yet (no radius).
+- Positions are rounded to 3 decimals (~100 m). The exact position is revealed only by `claim`.
+- `rarity` is one of `common`, `rare`, `epic`, `legendary`.
 
+### `POST /cards/{card_id}/claim`
+Start hunting a card. It becomes reserved for this player.
 
-## Phase 6 — doskaz handoff
+Request (form-data): `player_id`
 
-After a submission is saved, the backend hands it to doskaz (`DoskazClient`):
+Response `200`:
+```json
+{ "card_id": "ae8bbba4-…", "lat": 43.2552918, "lng": 76.9436849, "rarity": "rare" }
+```
+- `400 {"detail": "Card not available to claim"}`: the card is already claimed or caught, inactive, or outside the play area.
+- Cards are **shared**: once claimed, nobody else can take it.
 
-1. `POST /api/storage/upload`: raw photo bytes, returns `{"path": "/storage/<hash>.jpeg"}`.
-2. `POST /api/objects/requests`: a "small form" facility request referencing that path. Every accessibility attribute is sent as `not_provided`. doskaz answers `204 No Content`, so no object id comes back.
+### `POST /submissions`
+Send the photo of a claimed card.
 
-doskaz specifics (found by inspecting its own website in browser DevTools):
-- Auth is the `ACCESS_TOKEN` **cookie** of one shared doskaz account (`DOSKAZ_ACCESS_TOKEN` in `.env`), not a Bearer header. The cookie lasts 31 days and must be refreshed by hand.
-- CSRF is a double-submit pair: a random `XSRF-TOKEN` cookie plus an identical `X-Xsrf-Token` header, generated per client instance.
-- `first.otherNames` must not be empty.
+Request (multipart form-data):
 
-`submissions.handoff_status` becomes `sent` on success, or `failed` if doskaz rejects the request or is unreachable. The reason is printed to the server log. The player's reward is credited either way.
+| Field | Type | Notes |
+|---|---|---|
+| `player_id` | text | must be the player who claimed the card |
+| `card_id` | text | |
+| `lat`, `lng` | text (float) | where the player stood |
+| `photo` | file | one JPEG, max 10 MB (nginx limit) |
 
+Response `200`:
+```json
+{ "submission_id": "6ce1a298-…", "status": "sent", "reward": 20 }
+```
+- `status` is always `"sent"` once the photo is stored and the coins are credited. The client must not interpret it further.
+- `reward` = the card's coins; they are added to `currency_balance` immediately.
+- `400 {"detail": "Card must be claimed by this player first"}`.
+- The card becomes `submitted` and disappears from the map.
 
-## Phase 7 — Verification (admin API)
+### Card rarity and rewards (beta data)
 
-A separate admin API under `/admin`, protected by an `X-Admin-Key` header that is checked against `ADMIN_API_KEY` from `.env`. It is independent of player accounts. Players never see it.
+| Rarity | Coins |
+|---|---|
+| common | 10 |
+| rare | 20 |
+| epic | 40 |
+| legendary | 80 |
 
-- `GET /admin/submissions`: lists every submission with its `handoff_status` and `review_status`.
-- `POST /admin/submissions/{id}/review?decision=accepted|rejected`: records doskaz's review outcome. doskaz has no status feed, so you check their admin panel yourself and record the result here.
-- On `accepted`, a background task credits the held bonus to the player once. It checks the status first, so it never credits twice. It marks the `pending_bonuses` row `credited` and sets `credited_at`.
+The reward is stored per card (`base_reward`), so other values are possible. Cards have **no fixed meme picture**
+yet; the client chooses a picture by rarity.
 
-Limits: `BackgroundTasks` runs in-process, so a task scheduled just before a restart is lost. A real task queue would fix that.
+---
+
+## Admin API (`X-Admin-Key` header)
+
+For setup tasks from Postman. The key is `ADMIN_API_KEY` in `.env`.
+
+| Method & path | Body | What it does |
+|---|---|---|
+| `POST /admin/zones` | `{"name", "kind", "geojson"}` | Create zone(s). `kind`: `play_area`, `restricted` or `dangerous`. `geojson`: a Polygon/MultiPolygon, Feature or FeatureCollection (output of geojson.io works as is). Returns created zones and `cards_deactivated` |
+| `GET /admin/zones` | – | Active zones with geometry (`?include_inactive=true` for all) |
+| `POST /admin/zones/{id}/deactivate` | – | Turn a zone off (deactivated cards are not restored) |
+| `POST /admin/cards` | `{"lat", "lng", "rarity"?, "base_reward"?, "bonus_reward"?}` | Create a card. `409` if inside a blocked zone or outside the play area |
+| `GET /admin/submissions` | – | Raw list of submissions (legacy, prefer the staff pages) |
+| `POST /admin/submissions/{id}/review?decision=` | – | Legacy review endpoint (prefer the staff pages) |
+
+Zone rules:
+- **play_area:** if at least one is active, cards may exist only inside one. With none, the whole map is open.
+- **restricted / dangerous:** no cards inside, even within the play area.
+- Creating a zone deactivates existing cards that break the rules.
+- The rules use `cards.location`, which Postgres computes from `lat`/`lng`, so cards inserted with plain SQL follow them too.
+
+## Staff web pages (`/staff`)
+
+Browser UI for reviewers and admins: `https://api.zyangame.online/staff`.
+
+| Page | Who | Purpose |
+|---|---|---|
+| `/staff/login` | all staff | username + password (accounts are created with `scripts/create_staff.py`) |
+| `/staff/queue` | all staff | Pending / Accepted / Rejected tabs, photo thumbnails, distance player↔card (red if > 50 m) |
+| `/staff/submissions/{id}` | all staff | Large photo, map with card and player positions, accessibility form (6 groups: movement, limb, vision, hearing, intellectual, kids; full/partial/no/unknown), Accept / Reject with reason. Keyboard: A accept, R reject, N skip |
+| "Send to doskaz" form | admin only | On accepted submissions: object name, address, category → sends the photo and a summary to doskaz |
+
+Roles: `admin` and `reviewer` (stored in the `staff` table, separate from players).
+Photos are only served to logged-in staff.
+
+## Doskaz handoff
+
+- Automatic sending on submission is **off** (`DOSKAZ_HANDOFF_ENABLED=false`); submissions are stored with `handoff_status = held`.
+- An admin sends selected accepted submissions from the review page (`held`/`failed` → `sent`/`failed`).
+- Doskaz auth is a manually copied `ACCESS_TOKEN` cookie value (`DOSKAZ_ACCESS_TOKEN`). It expires and must be refreshed by hand.
+
+---
+
+## Data model (main tables)
+
+| Table | Key columns |
+|---|---|
+| `players` | `id`, `display_name`, `currency_balance`, `level`, `created_at` |
+| `cards` | `id`, `lat`, `lng`, `location` (PostGIS point, computed), `rarity`, `base_reward`, `bonus_reward`, `status` (`active`/`claimed`/`submitted`/`inactive`), `claimed_by_player_id`, `claimed_at` |
+| `submissions` | `id`, `player_id`, `card_id`, `lat`, `lng`, `photo_path`, `handoff_status` (`held`/`sent`/`failed`), `review_status` (`pending`/`accepted`/`rejected`), `reviewer_id`, `reviewed_at`, `reject_reason`, `accessibility` (JSON), `created_at` |
+| `zones` | `id`, `name`, `kind`, `area` (PostGIS geometry), `is_active`, `created_at` |
+| `staff` | `id`, `username`, `password_hash` (bcrypt), `role`, `is_active` |
+| `pending_bonuses` | legacy, no longer written |
+
+All timestamps are stored as UTC. Staff pages show Almaty time.
+The schema is managed with **Alembic** (`alembic/versions/`). Never create or change tables by hand.
+
+---
+
+## Running locally
+
+Requirements: Python 3.13+, PostgreSQL with PostGIS (Postgres.app or Homebrew, or `docker compose up -d`).
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+# create .env with the variables below
+alembic upgrade head        # creates / updates all tables
+python -m scripts.create_staff <username> admin
+uvicorn app.main:app --reload
+```
+
+`.env` variables:
+
+| Variable | Meaning |
+|---|---|
+| `DATABASE_URL` | e.g. `postgresql+asyncpg://localhost/memehunter` |
+| `DOSKAZ_BASE_URL` | default `https://doskaz.kz` |
+| `DOSKAZ_ACCESS_TOKEN` | doskaz `ACCESS_TOKEN` cookie value |
+| `ADMIN_API_KEY` | key for the `X-Admin-Key` header |
+| `SESSION_SECRET` | random string that signs the staff login cookie (`python -c "import secrets; print(secrets.token_hex(32))"`) |
+| `SESSION_HTTPS_ONLY` | `true` on the server (HTTPS), `false` locally |
+| `DOSKAZ_HANDOFF_ENABLED` | `false` (default): no automatic sending to doskaz |
+
+`.env.db` (only for `compose.yml`): `DB_USER`, `DB_PASSWORD`, `DB_NAME`.
+
+Schema changes: edit `app/models.py`, then
+```bash
+alembic revision --autogenerate -m "what changed"   # review the generated file
+alembic upgrade head
+```
+
+## Deploying to the server
+
+On the server, in `/root/backend` (the server follows the `dev` branch):
+
+```bash
+git pull
+uv pip install -r requirements.txt
+uv run alembic upgrade head
+pkill -f "uvicorn app.main:app"
+nohup uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 > nohup.out 2>&1 &
+curl -s localhost:8000/health
+```
+
+The app is not a system service yet: after a server reboot it must be started again with the `nohup` line.
+Back up the database before migrations:
+`docker exec db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > ~/backup-$(date +%F).sql`
+
+## Repository layout
+
+```
+app/
+  main.py            app setup, routers, staff session cookie
+  config.py          settings from .env
+  database.py        async engine and sessions
+  models.py          SQLAlchemy models (tables)
+  schemas.py         request/response models for players
+  routers/           game API (players, cards, submissions) and admin API (admin, admin_zones), doskaz debug route
+  staff/             staff web pages: login, review queue, review screen, doskaz sending
+  templates/staff/   HTML templates for the staff pages
+  static/            CSS for the staff pages
+  zones.py           zone rules (play area, blocked zones)
+  handoff.py         sending a submission to doskaz
+  doskaz_client.py   HTTP client for doskaz.kz
+  timeutil.py        UTC storage / Almaty display helpers
+alembic/             database migrations
+scripts/             create_staff.py
+docs/                phase-guide.md (build history)
+STATUS.md            current state of the backend
+```
