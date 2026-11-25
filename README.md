@@ -138,10 +138,13 @@ Request (form-data): `player_id`
 
 Response `200`:
 ```json
-{ "card_id": "ae8bbba4-…", "lat": 43.2552918, "lng": 76.9436849, "rarity": "rare" }
+{ "card_id": "ae8bbba4-…", "lat": 43.2552918, "lng": 76.9436849, "rarity": "rare",
+  "expires_at": "2026-11-25T14:30:00Z" }
 ```
 - `400 {"detail": "Card not available to claim"}`: the card is already claimed or caught, inactive, or outside the play area.
 - Cards are **shared**: once claimed, nobody else can take it.
+- The claim lasts **30 minutes** (`expires_at`, UTC). After that the card is released for everyone, and a late
+  submission gets `400 "Card must be claimed by this player first"`.
 
 ### `POST /submissions`
 Send the photo of a claimed card.
@@ -163,7 +166,8 @@ Response `200`:
 - `reward` = the card's coins; they are added to `currency_balance` immediately.
 - `xp` = XP credited for this catch (card coins × 5, × booster multiplier if one is active).
 - `400 {"detail": "Card must be claimed by this player first"}`.
-- The card becomes `submitted` and disappears from the map.
+- The card becomes `submitted` and disappears from the map. If it belongs to a spot, a **new card appears at the
+  same place one hour later** (see "Spots and respawn").
 
 ### Rarity, rewards and progression
 
@@ -190,6 +194,28 @@ Rank ids are placeholders; the client maps them to display names. XP booster pri
 
 Cards have **no fixed meme picture** yet; the client chooses a picture by rarity (see collection).
 
+### Spots and respawn
+
+A **spot** is a real place worth photographing (a ramp, an entrance, a parking sign). The cards around a spot are
+its slots:
+
+- When a card is caught, a new card appears at the same position **1 hour** later (a new `id`; the caught card stays in the collection).
+- The new card's rarity depends on how many photos the spot already has (not rejected), `need = max(0, 1 − photos / 10)`:
+
+| Rarity | Chance when the spot has no photos | Chance with 10+ photos |
+|---|---|---|
+| legendary | 15% | 5% |
+| epic | 25% | 10% |
+| rare | 35% | 25% |
+| common | 25% | 60% |
+
+  Chances move linearly in between, so players are pulled towards places with little data.
+- Coins follow the rarity: 10 / 20 / 40 / 80.
+- No respawn if the place is now inside a blocked zone or outside the play area, or if the spot is deactivated.
+- Cards without a spot (created directly) do not respawn.
+- A background job inside the app runs every minute: it releases expired claims and creates due respawns.
+  All numbers are in `app/spawning.py`.
+
 ---
 
 ## Admin API (`X-Admin-Key` header)
@@ -202,6 +228,9 @@ For setup tasks from Postman. The key is `ADMIN_API_KEY` in `.env`.
 | `GET /admin/zones` | – | Active zones with geometry (`?include_inactive=true` for all) |
 | `POST /admin/zones/{id}/deactivate` | – | Turn a zone off (deactivated cards are not restored) |
 | `POST /admin/cards` | `{"lat", "lng", "rarity"?, "base_reward"?, "bonus_reward"?}` | Create a card. `409` if inside a blocked zone or outside the play area |
+| `POST /admin/spots` | `{"name", "lat", "lng"}` | Create a spot. Existing cards within 15 m without a spot become its slots (`cards_linked`). `409` if the point is not allowed |
+| `GET /admin/spots` | – | Spots with `photos`, `need`, `cards_active`, `cards_claimed`, `cards_respawning` |
+| `POST /admin/spots/{id}/deactivate` | – | Stop respawning at this spot (cards already on the map stay) |
 | `GET /admin/submissions` | – | Raw list of submissions (legacy, prefer the staff pages) |
 | `POST /admin/submissions/{id}/review?decision=` | – | Legacy review endpoint (prefer the staff pages) |
 
@@ -238,9 +267,10 @@ Photos are only served to logged-in staff.
 | Table | Key columns |
 |---|---|
 | `players` | `id`, `display_name`, `currency_balance`, `level` (legacy), `xp`, `xp_booster_multiplier`, `xp_booster_expires_at`, `created_at` |
-| `cards` | `id`, `lat`, `lng`, `location` (PostGIS point, computed), `rarity`, `base_reward`, `bonus_reward`, `status` (`active`/`claimed`/`submitted`/`inactive`), `claimed_by_player_id`, `claimed_at` |
+| `cards` | `id`, `lat`, `lng`, `location` (PostGIS point, computed), `rarity`, `base_reward`, `bonus_reward`, `status` (`active`/`claimed`/`submitted`/`inactive`), `claimed_by_player_id`, `claimed_at`, `spot_id`, `respawn_at` |
 | `submissions` | `id`, `player_id`, `card_id`, `lat`, `lng`, `photo_path`, `handoff_status` (`held`/`sent`/`failed`), `review_status` (`pending`/`accepted`/`rejected`), `reviewer_id`, `reviewed_at`, `reject_reason`, `accessibility` (JSON), `xp_awarded`, `created_at` |
 | `zones` | `id`, `name`, `kind`, `area` (PostGIS geometry), `is_active`, `created_at` |
+| `spots` | `id`, `name`, `lat`, `lng`, `location` (computed), `is_active`, `created_at` |
 | `staff` | `id`, `username`, `password_hash` (bcrypt), `role`, `is_active` |
 | `pending_bonuses` | legacy, no longer written |
 
@@ -308,12 +338,13 @@ app/
   database.py        async engine and sessions
   models.py          SQLAlchemy models (tables)
   schemas.py         request/response models for players
-  routers/           game API (players, cards, submissions, leaderboard) and admin API (admin, admin_zones), doskaz debug route
+  routers/           game API (players, cards, submissions, leaderboard) and admin API (admin, admin_zones, admin_spots), doskaz debug route
   staff/             staff web pages: login, review queue, review screen, doskaz sending
   templates/staff/   HTML templates for the staff pages
   static/            CSS for the staff pages
   zones.py           zone rules (play area, blocked zones)
   progression.py     XP, ranks and XP booster numbers
+  spawning.py        claim timeout, card respawn, rarity chances (background job)
   handoff.py         sending a submission to doskaz
   doskaz_client.py   HTTP client for doskaz.kz
   timeutil.py        UTC storage / Almaty display helpers

@@ -46,6 +46,10 @@ class Card(Base):
         Geometry("POINT", srid=4326, spatial_index=False),
         Computed("ST_SetSRID(ST_MakePoint(lng, lat), 4326)", persisted=True),
     )
+    # Respawn (see app/spawning.py): a card placed around a spot is a "slot"; after it is caught,
+    # a new card appears at the same place once respawn_at has passed.
+    spot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("spots.id"), nullable=True)
+    respawn_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 '''Two reward fields now, not one: base_reward is credited instantly on submission; 
 bonus_reward is what gets recorded as a pending bonus and only lands in the player's 
@@ -116,3 +120,22 @@ class Zone(Base):
 '''Zones are areas where no card may exist: restricted (not allowed in) or dangerous (roads, rail, water, construction).
 For spawning both kinds behave the same; the kind is kept so the admin and the thesis can tell why a zone exists.
 Spatial indexes are created in the migration by name (spatial_index=False here), so Alembic does not try to manage them twice.'''
+
+
+
+class Spot(Base):
+    __tablename__ = "spots"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String)
+    lat: Mapped[float] = mapped_column(Float)
+    lng: Mapped[float] = mapped_column(Float)
+    location = mapped_column(
+        Geometry("POINT", srid=4326, spatial_index=False),
+        Computed("ST_SetSRID(ST_MakePoint(lng, lat), 4326)", persisted=True),
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+'''A spot is a real place worth photographing (a ramp, an entrance, a parking sign). Cards placed around it
+respawn there after being caught, and the spot's photo count decides how rare the new cards are.'''

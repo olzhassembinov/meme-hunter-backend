@@ -10,6 +10,7 @@ from ..handoff import send_to_doskaz
 from ..timeutil import utcnow_naive
 from ..config import settings
 from ..progression import active_multiplier, card_xp
+from ..spawning import RESPAWN_DELAY
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
 STORAGE_DIR = Path("storage/photos")
@@ -39,6 +40,8 @@ async def create_submission(
         created_at=utcnow_naive(),
     )
     card.status = "submitted"
+    if card.spot_id:  # cards around a spot come back after a while (see app/spawning.py)
+        card.respawn_at = utcnow_naive() + RESPAWN_DELAY
     db.add(submission)
     await db.commit()
     await db.refresh(submission)
