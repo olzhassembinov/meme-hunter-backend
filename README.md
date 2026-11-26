@@ -64,7 +64,7 @@ Response `200`: the player profile (same shape as `GET /players/{player_id}`). T
 with every later request.
 
 ### `GET /players/{player_id}`
-Player profile: coins, XP, rank and XP booster. Use it to refresh the profile screen and the booster timer.
+Player profile: coins, XP, rank, XP booster and daily streak. Use it to refresh the profile screen and the booster timer.
 
 Response `200`:
 ```json
@@ -72,12 +72,16 @@ Response `200`:
   "id": "8c05163d-…", "display_name": "Olly",
   "currency_balance": 50, "level": 1,
   "xp": 650, "rank": "rank_2", "xp_to_next_rank": 850,
-  "booster": { "active": true, "multiplier": 2, "expires_at": "2026-11-26T12:00:00Z", "seconds_left": 41230 }
+  "booster": { "active": true, "multiplier": 2, "expires_at": "2026-11-26T12:00:00Z", "seconds_left": 41230 },
+  "current_streak": 6, "streak_freeze_count": 1, "streak_done_today": false
 }
 ```
 - `xp_to_next_rank` is `null` at the top rank.
 - Without an active booster: `"booster": {"active": false, "multiplier": null, "expires_at": null, "seconds_left": 0}`.
 - `level` is legacy and always `1`; use `rank`.
+- `current_streak` is the streak as it stands now: `0` if it has already burned out (more missed days than freezes),
+  even before the next catch. `streak_done_today` is `true` once the player has submitted a photo today (Almaty day):
+  show the flame lit; `false`: today's catch is still needed. See "Daily streak".
 - `404 {"detail": "Player not found"}`, `422` for a malformed id.
 
 ### `POST /players/{player_id}/boosters/xp`
@@ -88,6 +92,12 @@ Request (JSON): `{ "multiplier": 2 }` (`2` or `5`)
 Response `200`: the updated profile (as above).
 - `400 {"detail": "Not enough coins"}`; `422` if the multiplier is not 2 or 5.
 - Buying while a booster is active **replaces** it (new multiplier, new 24 h). Boosters do not stack.
+
+### `POST /players/{player_id}/streak-freeze/buy`
+Buy one streak freeze for 40 coins. No request body. A player can hold at most 2 freezes.
+
+Response `200`: the updated profile (as above).
+- `400 {"detail": "Not enough coins"}`, `400 {"detail": "Freeze limit reached"}`, `404 {"detail": "Player not found"}`.
 
 ### `GET /players/{player_id}/collection`
 Cards the player has caught (rejected photos are not listed).
@@ -160,11 +170,12 @@ Request (multipart form-data):
 
 Response `200`:
 ```json
-{ "submission_id": "6ce1a298-…", "status": "sent", "reward": 20, "xp": 100 }
+{ "submission_id": "6ce1a298-…", "status": "sent", "reward": 20, "xp": 100, "streak": 6 }
 ```
 - `status` is always `"sent"` once the photo is stored and the coins are credited. The client must not interpret it further.
 - `reward` = the card's coins; they are added to `currency_balance` immediately.
 - `xp` = XP credited for this catch (card coins × 5, × booster multiplier if one is active).
+- `streak` = the daily streak after this catch (the first catch of a day raises it; later catches that day leave it).
 - `400 {"detail": "Card must be claimed by this player first"}`.
 - The card becomes `submitted` and disappears from the map. If it belongs to a spot, a **new card appears at the
   same place one hour later** (see "Spots and respawn").
@@ -179,7 +190,7 @@ Response `200`:
 | legendary | 80 | 400 |
 
 Coins and XP are stored per card (`base_reward`), so other values are possible.
-XP only grows; coins are spent (XP boosters).
+XP only grows; coins are spent (XP boosters, streak freezes).
 
 | Rank id | Minimum XP |
 |---|---|
@@ -193,6 +204,21 @@ Rank ids are placeholders; the client maps them to display names. XP booster pri
 24 hours. All these numbers live in `app/progression.py`.
 
 Cards have **no fixed meme picture** yet; the client chooses a picture by rarity (see collection).
+
+### Daily streak
+
+The streak counts **days with at least one submitted photo** (opening the app does not count). Days are Almaty
+calendar days (midnight in Almaty, not UTC).
+
+| Last catch was… | On today's first catch |
+|---|---|
+| never | streak = 1 |
+| today | nothing changes |
+| yesterday | streak + 1 |
+| N days ago, missed days ≤ freezes held | one freeze is used per missed day, streak + 1 |
+| N days ago, missed days > freezes held | streak starts again at 1, freezes are kept |
+
+Streak freeze: 40 coins, at most 2 held. Numbers live in `app/streak.py`.
 
 ### Spots and respawn
 
@@ -266,7 +292,7 @@ Photos are only served to logged-in staff.
 
 | Table | Key columns |
 |---|---|
-| `players` | `id`, `display_name`, `currency_balance`, `level` (legacy), `xp`, `xp_booster_multiplier`, `xp_booster_expires_at`, `created_at` |
+| `players` | `id`, `display_name`, `currency_balance`, `level` (legacy), `xp`, `xp_booster_multiplier`, `xp_booster_expires_at`, `current_streak`, `last_active_date` (Almaty date), `streak_freeze_count`, `created_at` |
 | `cards` | `id`, `lat`, `lng`, `location` (PostGIS point, computed), `rarity`, `base_reward`, `bonus_reward`, `status` (`active`/`claimed`/`submitted`/`inactive`), `claimed_by_player_id`, `claimed_at`, `spot_id`, `respawn_at` |
 | `submissions` | `id`, `player_id`, `card_id`, `lat`, `lng`, `photo_path`, `handoff_status` (`held`/`sent`/`failed`), `review_status` (`pending`/`accepted`/`rejected`), `reviewer_id`, `reviewed_at`, `reject_reason`, `accessibility` (JSON), `xp_awarded`, `created_at` |
 | `zones` | `id`, `name`, `kind`, `area` (PostGIS geometry), `is_active`, `created_at` |
@@ -344,6 +370,7 @@ app/
   static/            CSS for the staff pages
   zones.py           zone rules (play area, blocked zones)
   progression.py     XP, ranks and XP booster numbers
+  streak.py          daily streak rules and streak freeze numbers
   spawning.py        claim timeout, card respawn, rarity chances (background job)
   handoff.py         sending a submission to doskaz
   doskaz_client.py   HTTP client for doskaz.kz

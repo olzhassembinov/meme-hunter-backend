@@ -10,6 +10,7 @@ from ..database import get_db
 from ..models import Card, Player, Submission
 from ..progression import BOOSTER_DURATION, BOOSTER_PRICES, profile
 from ..schemas import PlayerCreate
+from ..streak import FREEZE_MAX, FREEZE_PRICE
 from ..timeutil import utcnow_naive
 
 router = APIRouter(prefix="/players", tags=["players"])
@@ -52,6 +53,22 @@ async def buy_xp_booster(player_id: uuid.UUID, data: BoosterBuy, db: AsyncSessio
     await db.commit()
     await db.refresh(player)
     return profile(player, now)
+
+
+@router.post("/{player_id}/streak-freeze/buy")
+async def buy_streak_freeze(player_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    player = (await db.execute(select(Player).where(Player.id == player_id).with_for_update())).scalar_one_or_none()
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+    if player.streak_freeze_count >= FREEZE_MAX:
+        raise HTTPException(status_code=400, detail="Freeze limit reached")
+    if player.currency_balance < FREEZE_PRICE:
+        raise HTTPException(status_code=400, detail="Not enough coins")
+    player.currency_balance -= FREEZE_PRICE
+    player.streak_freeze_count += 1
+    await db.commit()
+    await db.refresh(player)
+    return profile(player, utcnow_naive())
 
 
 @router.get("/{player_id}/collection")

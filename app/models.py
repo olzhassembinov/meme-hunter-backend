@@ -1,6 +1,6 @@
 import uuid
-from datetime import datetime
-from sqlalchemy import String, Integer, DateTime, Boolean, func
+from datetime import date, datetime
+from sqlalchemy import String, Integer, DateTime, Date, Boolean, func
 from sqlalchemy import Float, ForeignKey, Computed
 from geoalchemy2 import Geometry
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
@@ -23,6 +23,10 @@ class Player(Base):
     xp: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     xp_booster_multiplier: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 2 or 5
     xp_booster_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # naive UTC
+    # Daily streak (see app/streak.py): days are Almaty calendar days.
+    current_streak: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_active_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    streak_freeze_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 '''This is deliberately missing a doskaz_user_id column from our earlier schema sketch. 
 Since every submission goes out under the one shared doskaz account for now, there's no per-player 

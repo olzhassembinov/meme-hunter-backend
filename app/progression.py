@@ -5,6 +5,8 @@ All tunable numbers live here. Rank is derived from xp and never stored in the d
 from datetime import datetime, timedelta
 
 from .models import Card, Player
+from .streak import streak_state
+from .timeutil import local_today
 
 XP_PER_COIN = 5  # a card's XP = its coin reward x 5 (common 10 coins -> 50 XP)
 
@@ -65,4 +67,5 @@ def profile(player: Player, now: datetime) -> dict:
         "rank": rank,
         "xp_to_next_rank": to_next,
         "booster": booster_state(player, now),
+        **streak_state(player, local_today(now)),
     }

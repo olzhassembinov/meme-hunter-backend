@@ -1,7 +1,7 @@
 # Status — Backend
 
-Last updated: 2026-11-25
-Deployed: **partly**, production `https://api.zyangame.online` runs `dev` at `c194003` (deployed 2026-11-18); progression (`feature/progression`) and spawning (`feature/spawning`) are not deployed yet
+Last updated: 2026-11-26
+Deployed: **partly**, production `https://api.zyangame.online` runs `dev` at `c194003` (deployed 2026-11-18); progression (`feature/progression`), spawning (`feature/spawning`) and the daily streak (`feature/streak`) are not deployed yet
 
 ## Implemented and working
 
@@ -24,7 +24,10 @@ Deployed: **partly**, production `https://api.zyangame.online` runs `dev` at `c1
 - Branch `feature/spawning` (tested locally, on top of progression): spots, 30-minute claim timeout (`expires_at` in the
   claim response), automatic respawn 1 hour after a catch, rarity of respawned cards weighted towards spots with few
   photos, admin `POST/GET /admin/spots`, background job every minute; migration 0006
-- Next: deploy both branches (plus running the app as a system service), then the zones/spots map page for admins
+- Branch `feature/streak` (tested locally, on top of spawning): daily streak counted on photo submissions (Almaty days),
+  streak freeze bought with coins (40 coins, max 2 held, one freeze per missed day), profile fields `current_streak`,
+  `streak_freeze_count`, `streak_done_today`, `streak` in the submission response; migration 0007
+- Next: deploy the three branches (plus running the app as a system service), then the zones/spots map page for admins
 
 ## Known gaps / not implemented yet
 
@@ -37,7 +40,7 @@ Deployed: **partly**, production `https://api.zyangame.online` runs `dev` at `c1
 - Spots must be created through the admin API (no map page yet)
 - **`/cards/nearby` has no radius**: it returns every active card in the play area
 - **One photo per submission** (multi-photo planned)
-- The XP booster is the only way to spend coins (no shop)
+- Coins can only be spent on the XP booster and streak freezes (no shop)
 - No zones map page for admins (zones are drawn on geojson.io and sent with Postman)
 - No stats page; no automatic doskaz review-status feedback
 - Doskaz token is copied by hand and expires
@@ -47,8 +50,8 @@ Deployed: **partly**, production `https://api.zyangame.online` runs `dev` at `c1
 
 ## Recent changes
 
-1. `b5ad768` XP, ranks, XP booster, leaderboard and collection (branch `feature/progression`)
-2. `8d2c98d` README rewritten as API/ops reference; STATUS.md added
-3. `c194003` Zone kind `play_area`: cards exist only inside the beta area
-4. `ded3935` PostGIS safety zones; nearby, claim and card creation respect them
-5. `10df5bd` Admin "Send to doskaz" button; staff pages show Almaty time
+1. `f0ae866` Spots, 30-minute claim timeout and card respawn (branch `feature/spawning`)
+2. `b5ad768` XP, ranks, XP booster, leaderboard and collection (branch `feature/progression`)
+3. `8d2c98d` README rewritten as API/ops reference; STATUS.md added
+4. `c194003` Zone kind `play_area`: cards exist only inside the beta area
+5. `ded3935` PostGIS safety zones; nearby, claim and card creation respect them

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 LOCAL_TZ = ZoneInfo("Asia/Almaty")
@@ -14,3 +14,9 @@ def to_local(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     return value.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ)
+
+
+def local_today(now_utc: datetime | None = None) -> date:
+    """Calendar day in Almaty for a naive UTC moment (default: now). Daily streaks count Almaty days."""
+    now_utc = now_utc or utcnow_naive()
+    return now_utc.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ).date()
