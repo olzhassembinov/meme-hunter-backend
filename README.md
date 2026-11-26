@@ -340,20 +340,29 @@ alembic upgrade head
 
 ## Deploying to the server
 
-On the server, in `/root/backend` (the server follows the `dev` branch):
+The server follows the `dev` branch. The app runs as the systemd service `memehunter`
+(`/etc/systemd/system/memehunter.service`, uvicorn on 127.0.0.1:8000 behind nginx); the database is the Docker
+container `db` with restart policy `unless-stopped`. Both start by themselves after a reboot.
+
+On the server, in `/root/backend`:
 
 ```bash
+docker exec db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > ~/backup-$(date +%F).sql   # backup first
 git pull
-uv pip install -r requirements.txt
+uv pip install -r requirements.txt     # only if requirements.txt changed
 uv run alembic upgrade head
-pkill -f "uvicorn app.main:app"
-nohup uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 > nohup.out 2>&1 &
-curl -s localhost:8000/health
+systemctl restart memehunter
+curl -s https://api.zyangame.online/health
 ```
 
-The app is not a system service yet: after a server reboot it must be started again with the `nohup` line.
-Back up the database before migrations:
-`docker exec db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > ~/backup-$(date +%F).sql`
+Useful commands:
+
+| Command | What it does |
+|---|---|
+| `systemctl status memehunter` | is the app running |
+| `journalctl -u memehunter -n 100` | last 100 log lines (`-f` to follow live) |
+| `systemctl restart memehunter` | restart after a code change |
+| `docker ps` | is the database container up |
 
 ## Repository layout
 
