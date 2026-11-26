@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..models import Card
 from ..zones import not_allowed
+from ..spawning import CLAIM_TIMEOUT
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -35,7 +36,9 @@ async def claim_card(card_id: str, player_id: str = Form(...), db: AsyncSession 
     card.claimed_at = datetime.now(timezone.utc).replace(tzinfo=None)  # Store as naive UTC datetime
     await db.commit()
 
-    return {"card_id": card.id, "lat": card.lat, "lng": card.lng, "rarity": card.rarity}
+    expires_at = card.claimed_at + CLAIM_TIMEOUT  # after this the card is released for everyone
+    return {"card_id": card.id, "lat": card.lat, "lng": card.lng, "rarity": card.rarity,
+            "expires_at": expires_at.isoformat() + "Z"}
 
 '''nearby_cards is unchanged from before: lat/lng are accepted but not used to filter yet — every active card comes back, proving the response shape before real distance filtering exists. 
 claim_card is the new piece this revision calls for: this is the exact moment the backend hands over a card's real lat/lng to the client — not before, and this response is where that data exists. 

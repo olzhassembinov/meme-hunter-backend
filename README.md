@@ -60,17 +60,73 @@ Request (JSON):
 ```json
 { "display_name": "Olly" }
 ```
-Response `200`:
-```json
-{ "id": "8c05163d-…", "display_name": "Olly", "currency_balance": 0, "level": 1 }
-```
-The client stores `id` and sends it with every later request.
+Response `200`: the player profile (same shape as `GET /players/{player_id}`). The client stores `id` and sends it
+with every later request.
 
 ### `GET /players/{player_id}`
-Current player data (use it to refresh the coin balance).
-Response `200`: same shape as above. `404 {"detail": "Player not found"}`.
+Player profile: coins, XP, rank, XP booster and daily streak. Use it to refresh the profile screen and the booster timer.
 
-> `level` exists but is not used yet (always `1`).
+Response `200`:
+```json
+{
+  "id": "8c05163d-…", "display_name": "Olly",
+  "currency_balance": 50, "level": 1,
+  "xp": 650, "rank": "rank_2", "xp_to_next_rank": 850,
+  "booster": { "active": true, "multiplier": 2, "expires_at": "2026-11-26T12:00:00Z", "seconds_left": 41230 },
+  "current_streak": 6, "streak_freeze_count": 1, "streak_done_today": false
+}
+```
+- `xp_to_next_rank` is `null` at the top rank.
+- Without an active booster: `"booster": {"active": false, "multiplier": null, "expires_at": null, "seconds_left": 0}`.
+- `level` is legacy and always `1`; use `rank`.
+- `current_streak` is the streak as it stands now: `0` if it has already burned out (more missed days than freezes),
+  even before the next catch. `streak_done_today` is `true` once the player has submitted a photo today (Almaty day):
+  show the flame lit; `false`: today's catch is still needed. See "Daily streak".
+- `404 {"detail": "Player not found"}`, `422` for a malformed id.
+
+### `POST /players/{player_id}/boosters/xp`
+Buy an XP booster with coins. It lasts 24 hours.
+
+Request (JSON): `{ "multiplier": 2 }` (`2` or `5`)
+
+Response `200`: the updated profile (as above).
+- `400 {"detail": "Not enough coins"}`; `422` if the multiplier is not 2 or 5.
+- Buying while a booster is active **replaces** it (new multiplier, new 24 h). Boosters do not stack.
+
+### `POST /players/{player_id}/streak-freeze/buy`
+Buy one streak freeze for 40 coins. No request body. A player can hold at most 2 freezes.
+
+Response `200`: the updated profile (as above).
+- `400 {"detail": "Not enough coins"}`, `400 {"detail": "Freeze limit reached"}`, `404 {"detail": "Player not found"}`.
+
+### `GET /players/{player_id}/collection`
+Cards the player has caught (rejected photos are not listed).
+
+Response `200`:
+```json
+{
+  "total": 7,
+  "by_rarity": { "common": 4, "rare": 2, "epic": 1, "legendary": 0 },
+  "cards": [
+    { "card_id": "ae8bbba4-…", "rarity": "rare", "collected_at": "2026-11-24T12:30:00Z", "coins": 20, "xp": 100 }
+  ]
+}
+```
+Newest first. `xp` is what was actually credited (including a booster). Cards have no fixed picture yet: choose the
+meme picture from `card_id` (e.g. a hash of it within the rarity's pictures) so the same card always looks the same.
+
+### `GET /leaderboard?player_id=<uuid>&limit=20`
+Players ranked by XP (ties: earlier registration first). `limit` 1–100, default 20. `player_id` is optional.
+
+Response `200`:
+```json
+{
+  "top": [ { "position": 1, "display_name": "Olly", "xp": 650, "rank": "rank_2", "cards": 7 } ],
+  "me":  { "position": 14, "display_name": "Aru", "xp": 100, "rank": "rank_1", "cards": 1 }
+}
+```
+`me` is the requesting player's own entry (also when outside the top), `null` without `player_id`.
+Player ids are never exposed here.
 
 ### `GET /cards/nearby?lat=<float>&lng=<float>`
 Cards a player can hunt.
@@ -92,10 +148,13 @@ Request (form-data): `player_id`
 
 Response `200`:
 ```json
-{ "card_id": "ae8bbba4-…", "lat": 43.2552918, "lng": 76.9436849, "rarity": "rare" }
+{ "card_id": "ae8bbba4-…", "lat": 43.2552918, "lng": 76.9436849, "rarity": "rare",
+  "expires_at": "2026-11-25T14:30:00Z" }
 ```
 - `400 {"detail": "Card not available to claim"}`: the card is already claimed or caught, inactive, or outside the play area.
 - Cards are **shared**: once claimed, nobody else can take it.
+- The claim lasts **30 minutes** (`expires_at`, UTC). After that the card is released for everyone, and a late
+  submission gets `400 "Card must be claimed by this player first"`.
 
 ### `POST /submissions`
 Send the photo of a claimed card.
@@ -111,24 +170,77 @@ Request (multipart form-data):
 
 Response `200`:
 ```json
-{ "submission_id": "6ce1a298-…", "status": "sent", "reward": 20 }
+{ "submission_id": "6ce1a298-…", "status": "sent", "reward": 20, "xp": 100, "streak": 6 }
 ```
 - `status` is always `"sent"` once the photo is stored and the coins are credited. The client must not interpret it further.
 - `reward` = the card's coins; they are added to `currency_balance` immediately.
+- `xp` = XP credited for this catch (card coins × 5, × booster multiplier if one is active).
+- `streak` = the daily streak after this catch (the first catch of a day raises it; later catches that day leave it).
 - `400 {"detail": "Card must be claimed by this player first"}`.
-- The card becomes `submitted` and disappears from the map.
+- The card becomes `submitted` and disappears from the map. If it belongs to a spot, a **new card appears at the
+  same place one hour later** (see "Spots and respawn").
 
-### Card rarity and rewards (beta data)
+### Rarity, rewards and progression
 
-| Rarity | Coins |
+| Rarity | Coins (beta cards) | XP (coins × 5) |
+|---|---|---|
+| common | 10 | 50 |
+| rare | 20 | 100 |
+| epic | 40 | 200 |
+| legendary | 80 | 400 |
+
+Coins and XP are stored per card (`base_reward`), so other values are possible.
+XP only grows; coins are spent (XP boosters, streak freezes).
+
+| Rank id | Minimum XP |
 |---|---|
-| common | 10 |
-| rare | 20 |
-| epic | 40 |
-| legendary | 80 |
+| `rank_1` | 0 |
+| `rank_2` | 500 |
+| `rank_3` | 1500 |
+| `rank_4` | 3500 |
+| `rank_5` | 7000 |
 
-The reward is stored per card (`base_reward`), so other values are possible. Cards have **no fixed meme picture**
-yet; the client chooses a picture by rarity.
+Rank ids are placeholders; the client maps them to display names. XP booster prices: ×2 = 50 coins, ×5 = 150 coins,
+24 hours. All these numbers live in `app/progression.py`.
+
+Cards have **no fixed meme picture** yet; the client chooses a picture by rarity (see collection).
+
+### Daily streak
+
+The streak counts **days with at least one submitted photo** (opening the app does not count). Days are Almaty
+calendar days (midnight in Almaty, not UTC).
+
+| Last catch was… | On today's first catch |
+|---|---|
+| never | streak = 1 |
+| today | nothing changes |
+| yesterday | streak + 1 |
+| N days ago, missed days ≤ freezes held | one freeze is used per missed day, streak + 1 |
+| N days ago, missed days > freezes held | streak starts again at 1, freezes are kept |
+
+Streak freeze: 40 coins, at most 2 held. Numbers live in `app/streak.py`.
+
+### Spots and respawn
+
+A **spot** is a real place worth photographing (a ramp, an entrance, a parking sign). The cards around a spot are
+its slots:
+
+- When a card is caught, a new card appears at the same position **1 hour** later (a new `id`; the caught card stays in the collection).
+- The new card's rarity depends on how many photos the spot already has (not rejected), `need = max(0, 1 − photos / 10)`:
+
+| Rarity | Chance when the spot has no photos | Chance with 10+ photos |
+|---|---|---|
+| legendary | 15% | 5% |
+| epic | 25% | 10% |
+| rare | 35% | 25% |
+| common | 25% | 60% |
+
+  Chances move linearly in between, so players are pulled towards places with little data.
+- Coins follow the rarity: 10 / 20 / 40 / 80.
+- No respawn if the place is now inside a blocked zone or outside the play area, or if the spot is deactivated.
+- Cards without a spot (created directly) do not respawn.
+- A background job inside the app runs every minute: it releases expired claims and creates due respawns.
+  All numbers are in `app/spawning.py`.
 
 ---
 
@@ -142,6 +254,9 @@ For setup tasks from Postman. The key is `ADMIN_API_KEY` in `.env`.
 | `GET /admin/zones` | – | Active zones with geometry (`?include_inactive=true` for all) |
 | `POST /admin/zones/{id}/deactivate` | – | Turn a zone off (deactivated cards are not restored) |
 | `POST /admin/cards` | `{"lat", "lng", "rarity"?, "base_reward"?, "bonus_reward"?}` | Create a card. `409` if inside a blocked zone or outside the play area |
+| `POST /admin/spots` | `{"name", "lat", "lng"}` | Create a spot. Existing cards within 15 m without a spot become its slots (`cards_linked`). `409` if the point is not allowed |
+| `GET /admin/spots` | – | Spots with `photos`, `need`, `cards_active`, `cards_claimed`, `cards_respawning` |
+| `POST /admin/spots/{id}/deactivate` | – | Stop respawning at this spot (cards already on the map stay) |
 | `GET /admin/submissions` | – | Raw list of submissions (legacy, prefer the staff pages) |
 | `POST /admin/submissions/{id}/review?decision=` | – | Legacy review endpoint (prefer the staff pages) |
 
@@ -177,10 +292,11 @@ Photos are only served to logged-in staff.
 
 | Table | Key columns |
 |---|---|
-| `players` | `id`, `display_name`, `currency_balance`, `level`, `created_at` |
-| `cards` | `id`, `lat`, `lng`, `location` (PostGIS point, computed), `rarity`, `base_reward`, `bonus_reward`, `status` (`active`/`claimed`/`submitted`/`inactive`), `claimed_by_player_id`, `claimed_at` |
-| `submissions` | `id`, `player_id`, `card_id`, `lat`, `lng`, `photo_path`, `handoff_status` (`held`/`sent`/`failed`), `review_status` (`pending`/`accepted`/`rejected`), `reviewer_id`, `reviewed_at`, `reject_reason`, `accessibility` (JSON), `created_at` |
+| `players` | `id`, `display_name`, `currency_balance`, `level` (legacy), `xp`, `xp_booster_multiplier`, `xp_booster_expires_at`, `current_streak`, `last_active_date` (Almaty date), `streak_freeze_count`, `created_at` |
+| `cards` | `id`, `lat`, `lng`, `location` (PostGIS point, computed), `rarity`, `base_reward`, `bonus_reward`, `status` (`active`/`claimed`/`submitted`/`inactive`), `claimed_by_player_id`, `claimed_at`, `spot_id`, `respawn_at` |
+| `submissions` | `id`, `player_id`, `card_id`, `lat`, `lng`, `photo_path`, `handoff_status` (`held`/`sent`/`failed`), `review_status` (`pending`/`accepted`/`rejected`), `reviewer_id`, `reviewed_at`, `reject_reason`, `accessibility` (JSON), `xp_awarded`, `created_at` |
 | `zones` | `id`, `name`, `kind`, `area` (PostGIS geometry), `is_active`, `created_at` |
+| `spots` | `id`, `name`, `lat`, `lng`, `location` (computed), `is_active`, `created_at` |
 | `staff` | `id`, `username`, `password_hash` (bcrypt), `role`, `is_active` |
 | `pending_bonuses` | legacy, no longer written |
 
@@ -248,11 +364,14 @@ app/
   database.py        async engine and sessions
   models.py          SQLAlchemy models (tables)
   schemas.py         request/response models for players
-  routers/           game API (players, cards, submissions) and admin API (admin, admin_zones), doskaz debug route
+  routers/           game API (players, cards, submissions, leaderboard) and admin API (admin, admin_zones, admin_spots), doskaz debug route
   staff/             staff web pages: login, review queue, review screen, doskaz sending
   templates/staff/   HTML templates for the staff pages
   static/            CSS for the staff pages
   zones.py           zone rules (play area, blocked zones)
+  progression.py     XP, ranks and XP booster numbers
+  streak.py          daily streak rules and streak freeze numbers
+  spawning.py        claim timeout, card respawn, rarity chances (background job)
   handoff.py         sending a submission to doskaz
   doskaz_client.py   HTTP client for doskaz.kz
   timeutil.py        UTC storage / Almaty display helpers

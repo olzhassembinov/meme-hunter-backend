@@ -1,6 +1,6 @@
 import uuid
-from datetime import datetime
-from sqlalchemy import String, Integer, DateTime, Boolean, func
+from datetime import date, datetime
+from sqlalchemy import String, Integer, DateTime, Date, Boolean, func
 from sqlalchemy import Float, ForeignKey, Computed
 from geoalchemy2 import Geometry
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
@@ -17,8 +17,16 @@ class Player(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
     display_name: Mapped[str] = mapped_column(String)
     currency_balance: Mapped[int] = mapped_column(Integer, default=0)
-    level: Mapped[int] = mapped_column(Integer, default=1)
+    level: Mapped[int] = mapped_column(Integer, default=1)  # unused; progression uses xp + rank
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Progression (see app/progression.py): xp only grows; rank is derived from it, never stored.
+    xp: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    xp_booster_multiplier: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 2 or 5
+    xp_booster_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # naive UTC
+    # Daily streak (see app/streak.py): days are Almaty calendar days.
+    current_streak: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_active_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    streak_freeze_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 '''This is deliberately missing a doskaz_user_id column from our earlier schema sketch. 
 Since every submission goes out under the one shared doskaz account for now, there's no per-player 
@@ -42,6 +50,10 @@ class Card(Base):
         Geometry("POINT", srid=4326, spatial_index=False),
         Computed("ST_SetSRID(ST_MakePoint(lng, lat), 4326)", persisted=True),
     )
+    # Respawn (see app/spawning.py): a card placed around a spot is a "slot"; after it is caught,
+    # a new card appears at the same place once respawn_at has passed.
+    spot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("spots.id"), nullable=True)
+    respawn_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 '''Two reward fields now, not one: base_reward is credited instantly on submission; 
 bonus_reward is what gets recorded as a pending bonus and only lands in the player's 
@@ -65,6 +77,7 @@ class Submission(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reject_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     accessibility: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    xp_awarded: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # incl. booster
 
 
 class PendingBonus(Base):
@@ -111,3 +124,22 @@ class Zone(Base):
 '''Zones are areas where no card may exist: restricted (not allowed in) or dangerous (roads, rail, water, construction).
 For spawning both kinds behave the same; the kind is kept so the admin and the thesis can tell why a zone exists.
 Spatial indexes are created in the migration by name (spatial_index=False here), so Alembic does not try to manage them twice.'''
+
+
+
+class Spot(Base):
+    __tablename__ = "spots"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String)
+    lat: Mapped[float] = mapped_column(Float)
+    lng: Mapped[float] = mapped_column(Float)
+    location = mapped_column(
+        Geometry("POINT", srid=4326, spatial_index=False),
+        Computed("ST_SetSRID(ST_MakePoint(lng, lat), 4326)", persisted=True),
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+'''A spot is a real place worth photographing (a ramp, an entrance, a parking sign). Cards placed around it
+respawn there after being caught, and the spot's photo count decides how rare the new cards are.'''
